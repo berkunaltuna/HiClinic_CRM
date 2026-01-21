@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: crm
+      POSTGRES_DB: crm
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm -d crm"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./api
+    environment:
+      APP_VERSION: "0.0.1"
+      DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./worker
+    environment:
+      APP_VERSION: "0.0.1"
+      DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:
