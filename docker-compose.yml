@@ -21,6 +21,7 @@ services:
     environment:
       APP_VERSION: "0.0.1"
       DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
+      JWT_SECRET_KEY: "dev-change-me"
     ports:
       - "8000:8000"
     depends_on:
@@ -33,6 +34,7 @@ services:
     environment:
       APP_VERSION: "0.0.1"
       DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
+      JWT_SECRET_KEY: "dev-change-me"
     depends_on:
       db:
         condition: service_healthy

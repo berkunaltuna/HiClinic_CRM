@@ -3,3 +3,9 @@ uvicorn[standard]==0.30.6
 pydantic==2.9.2
 SQLAlchemy==2.0.36
 psycopg[binary]==3.2.3
+alembic==1.14.0
+passlib[argon2]==1.7.4
+argon2-cffi>=23.1.0
+PyJWT==2.9.0
+python-dateutil==2.9.0.post0
+email-validator==2.2.0

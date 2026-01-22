@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import os
+
 from fastapi import FastAPI
 
+from app.api.router import api_router
+
 app = FastAPI(title="Minimal CRM API", version=os.getenv("APP_VERSION", "0.0.0"))
+
+app.include_router(api_router)
 
 
 @app.get("/health")
