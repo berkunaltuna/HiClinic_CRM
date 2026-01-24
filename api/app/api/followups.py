@@ -19,22 +19,27 @@ def list_followups(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[CustomerOut]:
-    """List customers due for follow-up on a given date (UTC).
-
-    For Phase 1, we use UTC boundaries to keep the implementation simple.
     """
-    target = date_ or datetime.now(tz=timezone.utc).date()
-    start = datetime.combine(target, time.min).replace(tzinfo=timezone.utc)
-    end = datetime.combine(target, time.max).replace(tzinfo=timezone.utc)
+    If `date` is provided: return followups scheduled on that UTC date (within day bounds).
+    If `date` is not provided: return followups that are due or overdue (<= now, UTC).
+    """
+    now = datetime.now(tz=timezone.utc)
 
-    return (
+    q = (
         db.query(Customer)
         .filter(
             Customer.owner_user_id == user.id,
             Customer.next_follow_up_at.isnot(None),
-            Customer.next_follow_up_at >= start,
-            Customer.next_follow_up_at <= end,
         )
-        .order_by(Customer.next_follow_up_at.asc())
-        .all()
     )
+
+    if date_ is None:
+        # due + overdue
+        q = q.filter(Customer.next_follow_up_at <= now)
+    else:
+        # scheduled on that day (UTC)
+        start = datetime.combine(date_, time.min).replace(tzinfo=timezone.utc)
+        end = datetime.combine(date_, time.max).replace(tzinfo=timezone.utc)
+        q = q.filter(Customer.next_follow_up_at >= start, Customer.next_follow_up_at <= end)
+
+    return q.order_by(Customer.next_follow_up_at.asc()).all()
