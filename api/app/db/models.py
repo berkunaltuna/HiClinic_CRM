@@ -151,3 +151,36 @@ class Interaction(Base):
     )
 
     customer = relationship("Customer", back_populates="interactions")
+
+class Template(Base):
+    __tablename__ = "templates"
+
+    id = sa.Column(
+        sa.UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        nullable=False,
+    )
+
+    # Phase 2 supports email and whatsapp templates
+    template_channel_enum = sa.Enum("email", "whatsapp", name="template_channel")
+    channel = sa.Column(template_channel_enum, nullable=False)
+    name = sa.Column(sa.String(200), nullable=False)
+    subject = sa.Column(sa.String(300))  # email only; whatsapp templates can leave this NULL
+    body = sa.Column(sa.Text(), nullable=False)
+
+    created_at = sa.Column(
+        sa.DateTime(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+    )
+    updated_at = sa.Column(
+        sa.DateTime(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        sa.UniqueConstraint("channel", "name", name="uq_templates_channel_name"),
+    )
+

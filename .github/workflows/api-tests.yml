@@ -44,5 +44,6 @@ jobs:
           DATABASE_URL: postgresql+psycopg://crm:crm@localhost:5432/crm_test
           JWT_SECRET_KEY: dev-change-me
           PYTHONPATH: .
+          ADMIN_EMAILS: admin@example.com
         run: |
           pytest -q

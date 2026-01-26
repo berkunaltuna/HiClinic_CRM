@@ -16,5 +16,14 @@ class Settings:
         os.getenv("JWT_ACCESS_TOKEN_EXP_MINUTES", "120")
     )
 
+    # Admin setup (Phase 2):
+    # Comma-separated list of emails that should be treated as admins at registration time.
+    # Example: ADMIN_EMAILS="admin@example.com,ops@example.com"
+    admin_emails: list[str] = [
+        e.strip().lower()
+        for e in os.getenv("ADMIN_EMAILS", "").split(",")
+        if e.strip()
+    ]
+
 
 settings = Settings()

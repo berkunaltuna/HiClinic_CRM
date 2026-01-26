@@ -22,6 +22,7 @@ services:
       APP_VERSION: "0.0.1"
       DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
       JWT_SECRET_KEY: "dev-change-me"
+      ADMIN_EMAILS: "admin@example.com"
     ports:
       - "8000:8000"
     volumes:
@@ -37,6 +38,7 @@ services:
       APP_VERSION: "0.0.1"
       DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
       JWT_SECRET_KEY: "dev-change-me"
+      ADMIN_EMAILS: "admin@example.com"
     depends_on:
       db:
         condition: service_healthy
@@ -48,6 +50,7 @@ services:
       APP_VERSION: "0.0.1"
       DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm_test"
       JWT_SECRET_KEY: "dev-change-me"
+      ADMIN_EMAILS: "admin@example.com"
       PYTHONPATH: "/app"
     volumes:
       - ./api:/app

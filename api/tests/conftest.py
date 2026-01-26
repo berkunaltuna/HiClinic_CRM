@@ -9,6 +9,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+# Phase 2: ensure we have an admin email available during tests.
+# Must be set BEFORE importing the app/config.
+os.environ.setdefault("ADMIN_EMAILS", "admin@example.com")
+
 from app.main import app
 from app.db.base import Base
 from app.db.session import get_db
@@ -26,7 +30,6 @@ def engine():
     url = str(settings.database_url)
     if "test" not in url:
         raise RuntimeError(f"Refusing to run tests on non-test database: {url}")
-
 
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
@@ -77,3 +80,21 @@ def token(client: TestClient, user_credentials) -> str:
 @pytest.fixture()
 def auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture()
+def admin_credentials():
+    # Must match ADMIN_EMAILS above
+    return {"email": "admin@example.com", "password": "ChangeMe123!"}
+
+
+@pytest.fixture()
+def admin_token(client: TestClient, admin_credentials) -> str:
+    r = client.post("/auth/register", json=admin_credentials)
+    assert r.status_code == 201, r.text
+    return r.json()["access_token"]
+
+
+@pytest.fixture()
+def admin_headers(admin_token: str) -> dict:
+    return {"Authorization": f"Bearer {admin_token}"}
