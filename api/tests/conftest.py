@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 # Phase 2: ensure we have an admin email available during tests.
 # Must be set BEFORE importing the app/config.
 os.environ.setdefault("ADMIN_EMAILS", "admin@example.com")
+os.environ.setdefault("EMAIL_PROVIDER", "fake")
 
 from app.main import app
 from app.db.base import Base

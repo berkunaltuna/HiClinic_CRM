@@ -45,5 +45,6 @@ jobs:
           JWT_SECRET_KEY: dev-change-me
           PYTHONPATH: .
           ADMIN_EMAILS: admin@example.com
+          EMAIL_PROVIDER: fake
         run: |
           pytest -q

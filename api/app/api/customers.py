@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -35,6 +35,8 @@ def create_customer(
         phone=payload.phone,
         company=payload.company,
         next_follow_up_at=payload.next_follow_up_at,
+        can_contact=payload.can_contact,
+        language=payload.language,
     )
     db.add(customer)
     db.commit()
@@ -78,7 +80,8 @@ def update_customer(
         if key == "email" and value is not None:
             value = str(value)
         setattr(customer, key, value)
-    customer.updated_at = datetime.utcnow()
+    from datetime import timezone
+    customer.updated_at = datetime.now(tz=timezone.utc)
 
     db.add(customer)
     db.commit()

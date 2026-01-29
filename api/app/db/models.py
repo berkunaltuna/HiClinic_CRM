@@ -54,6 +54,8 @@ class Customer(Base):
     phone = sa.Column(sa.String(50))
     company = sa.Column(sa.String(200))
     next_follow_up_at = sa.Column(sa.DateTime(timezone=True))
+    can_contact = sa.Column(sa.Boolean(), nullable=False, server_default=sa.text('true'))
+    language = sa.Column(sa.String(10))
 
     created_at = sa.Column(
         sa.DateTime(timezone=True),
@@ -138,6 +140,8 @@ class Interaction(Base):
         nullable=False,
     )
     content = sa.Column(sa.Text)
+    subject = sa.Column(sa.Text)
+    provider_message_id = sa.Column(sa.String(200))
 
     created_at = sa.Column(
         sa.DateTime(timezone=True),
@@ -169,6 +173,11 @@ class Template(Base):
     subject = sa.Column(sa.String(300))  # email only; whatsapp templates can leave this NULL
     body = sa.Column(sa.Text(), nullable=False)
 
+    template_category_enum = sa.Enum('transactional', 'marketing', name='template_category')
+    category = sa.Column(template_category_enum, nullable=False, server_default='transactional')
+    # Language tag for multilingual templates. 'und' means default/unspecified.
+    language = sa.Column(sa.String(10), nullable=False, server_default='und')
+
     created_at = sa.Column(
         sa.DateTime(timezone=True),
         server_default=sa.text("now()"),
@@ -181,6 +190,6 @@ class Template(Base):
     )
 
     __table_args__ = (
-        sa.UniqueConstraint("channel", "name", name="uq_templates_channel_name"),
+        sa.UniqueConstraint('channel', 'name', 'language', name='uq_templates_channel_name_language'),
     )
 

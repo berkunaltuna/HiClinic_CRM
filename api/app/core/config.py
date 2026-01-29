@@ -26,4 +26,8 @@ class Settings:
     ]
 
 
+    # Email provider (Phase 3): 'fake' for dev/tests.
+    email_provider: str = os.getenv('EMAIL_PROVIDER', 'fake').lower()
+
+
 settings = Settings()

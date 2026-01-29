@@ -23,6 +23,7 @@ services:
       DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
       JWT_SECRET_KEY: "dev-change-me"
       ADMIN_EMAILS: "admin@example.com"
+      EMAIL_PROVIDER: "fake"
     ports:
       - "8000:8000"
     volumes:
@@ -39,6 +40,7 @@ services:
       DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
       JWT_SECRET_KEY: "dev-change-me"
       ADMIN_EMAILS: "admin@example.com"
+      EMAIL_PROVIDER: "fake"
     depends_on:
       db:
         condition: service_healthy
@@ -51,14 +53,16 @@ services:
       DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm_test"
       JWT_SECRET_KEY: "dev-change-me"
       ADMIN_EMAILS: "admin@example.com"
+      EMAIL_PROVIDER: "fake"
       PYTHONPATH: "/app"
     volumes:
       - ./api:/app
     depends_on:
       db:
         condition: service_healthy
-    command: sh -lc "pip install -r requirements-dev.txt && pytest -q"
-
-
+    command: > 
+      sh -lc "psql postgresql://crm:crm@db:5432/postgres -c 'CREATE DATABASE crm_test;' || true &&
+      pip install -r requirements-dev.txt &&
+      pytest -q"
 volumes:
   db_data:

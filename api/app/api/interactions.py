@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -30,7 +30,7 @@ def create_interaction(
     user: User = Depends(get_current_user),
 ) -> InteractionOut:
     customer = _get_owned_customer(db, customer_id, user)
-    occurred_at = payload.occurred_at or datetime.utcnow()
+    occurred_at = payload.occurred_at or datetime.now(tz=timezone.utc)
     interaction = Interaction(
         customer_id=customer.id,
         owner_user_id=user.id,
@@ -38,6 +38,8 @@ def create_interaction(
         direction=payload.direction,
         occurred_at=occurred_at,
         content=payload.content,
+        subject=payload.subject,
+        provider_message_id=payload.provider_message_id,
     )
     db.add(interaction)
     db.commit()
