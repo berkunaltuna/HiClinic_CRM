@@ -24,8 +24,15 @@ services:
       JWT_SECRET_KEY: "dev-change-me"
       ADMIN_EMAILS: "admin@example.com"
       EMAIL_PROVIDER: "fake"
-    ports:
-      - "8000:8000"
+      SMTP_HOST: "smtp.gmail.com"
+      SMTP_PORT: "587"
+      SMTP_USERNAME: "info@healthclinicturkiye.com"
+      SMTP_PASSWORD: "tzia pzng teum rpxh"
+      SMTP_FROM_EMAIL: "info@healthclinicturkiye.com"
+      SMTP_FROM_NAME: "Health Clinic Turkiye"
+      SMTP_USE_STARTTLS: "true"    
+      ports:
+        - "8000:8000"
     volumes:
       - ./api:/app
     depends_on:
@@ -41,7 +48,14 @@ services:
       JWT_SECRET_KEY: "dev-change-me"
       ADMIN_EMAILS: "admin@example.com"
       EMAIL_PROVIDER: "fake"
-    depends_on:
+      SMTP_HOST: "smtp.gmail.com"
+      SMTP_PORT: "587"
+      SMTP_USERNAME: "info@healthclinicturkiye.com"
+      SMTP_PASSWORD: "tzia pzng teum rpxh"
+      SMTP_FROM_EMAIL: "info@healthclinicturkiye.com"
+      SMTP_FROM_NAME: "Health Clinic Turkiye"
+      SMTP_USE_STARTTLS: "true"    
+      depends_on:
       db:
         condition: service_healthy
   

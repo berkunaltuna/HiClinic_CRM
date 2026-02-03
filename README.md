@@ -95,3 +95,23 @@ curl -s "http://localhost:8000/followups?date=2026-01-22" \
 - Passwords are stored hashed (bcrypt via passlib)
 - JWT access tokens are signed using `JWT_SECRET_KEY` (set in `docker-compose.yml` for local dev)
 - Phase 1 uses UTC date boundaries for follow-up queries (kept simple on purpose)
+
+
+## Real email sending (SMTP / Gmail app password)
+
+By default the app uses a **fake** provider (no real emails) which is also used in tests/CI.
+
+To send real emails via Gmail SMTP, set:
+
+- `EMAIL_PROVIDER=smtp`
+- `SMTP_HOST=smtp.gmail.com`
+- `SMTP_PORT=587`
+- `SMTP_USE_STARTTLS=true`
+- `SMTP_USERNAME=info@yourdomain.com`
+- `SMTP_PASSWORD=<gmail app password>`
+- `SMTP_FROM_EMAIL=info@yourdomain.com`
+- `SMTP_FROM_NAME=<display name>`
+
+**Tip:** keep `SMTP_PASSWORD` out of git. Put it in a local `.env` and load it in docker compose, or pass it as an environment variable at runtime.
+
+Tests always force `EMAIL_PROVIDER=fake`.

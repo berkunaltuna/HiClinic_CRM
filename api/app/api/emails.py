@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.db.models import Customer, Interaction, Template, User
 from app.db.session import get_db
 from app.schemas.email import EmailSendOut, EmailSendRequest
-from app.services.email_provider import FakeEmailProvider
+from app.services.email_provider import get_email_provider
 from app.services.template_render import render_template
 
 
@@ -59,11 +59,17 @@ def _select_template(
 
 
 def _get_email_provider():
-    # Phase 3: fake provider only
-    if settings.email_provider != "fake":
-        # Not implemented yet; keep future-proof error.
-        raise RuntimeError("Only EMAIL_PROVIDER=fake is supported in this phase")
-    return FakeEmailProvider()
+    return get_email_provider(
+        provider=settings.email_provider,
+        smtp_host=settings.smtp_host,
+        smtp_port=settings.smtp_port,
+        smtp_username=settings.smtp_username,
+        smtp_password=settings.smtp_password,
+        smtp_from_email=settings.smtp_from_email,
+        smtp_from_name=settings.smtp_from_name,
+        smtp_use_starttls=settings.smtp_use_starttls,
+    )
+
 
 
 @router.post("/{customer_id}/email/send", response_model=EmailSendOut, status_code=status.HTTP_201_CREATED)

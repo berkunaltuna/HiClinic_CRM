@@ -95,17 +95,13 @@ def admin_token(client: TestClient, admin_credentials) -> str:
     r = client.post("/auth/register", json=admin_credentials)
     if r.status_code == 201:
         return r.json()["access_token"]
-
     # If already registered, login instead
     if r.status_code == 400 and "already" in r.text.lower():
         r2 = client.post("/auth/login", json=admin_credentials)
         assert r2.status_code == 200, r2.text
         return r2.json()["access_token"]
-
     # Any other failure should fail the test setup
     assert False, f"Unexpected register response: {r.status_code} {r.text}"
-
-
 
 @pytest.fixture()
 def admin_headers(admin_token: str) -> dict:
