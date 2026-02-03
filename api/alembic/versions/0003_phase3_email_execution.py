@@ -3,58 +3,55 @@
 Revision ID: 0003_phase3
 Revises: 0002_phase2
 Create Date: 2026-01-28
-
 """
 
 from __future__ import annotations
 
 from alembic import op
 import sqlalchemy as sa
-
+from sqlalchemy.dialects import postgresql
 
 revision = "0003_phase3"
 down_revision = "0002_phase2"
 branch_labels = None
 depends_on = None
 
-
-template_category_enum = sa.Enum("transactional", "marketing", name="template_category")
+template_category_enum = postgresql.ENUM(
+    "transactional",
+    "marketing",
+    name="template_category",
+    create_type=False,
+)
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    template_category_enum.create(bind, checkfirst=True)
+    # Idempotent enum creation
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            CREATE TYPE template_category AS ENUM ('transactional', 'marketing');
+        EXCEPTION
+            WHEN duplicate_object THEN NULL;
+        END $$;
+        """
+    )
 
     # Customers: consent + language
     op.add_column(
         "customers",
-        sa.Column(
-            "can_contact",
-            sa.Boolean(),
-            nullable=False,
-            server_default=sa.text("true"),
-        ),
+        sa.Column("can_contact", sa.Boolean(), nullable=False, server_default=sa.text("true")),
     )
     op.add_column("customers", sa.Column("language", sa.String(length=10), nullable=True))
 
     # Templates: category + language (default/unspecified = 'und')
     op.add_column(
         "templates",
-        sa.Column(
-            "category",
-            template_category_enum,
-            nullable=False,
-            server_default="transactional",
-        ),
+        sa.Column("category", template_category_enum, nullable=False, server_default="transactional"),
     )
     op.add_column(
         "templates",
-        sa.Column(
-            "language",
-            sa.String(length=10),
-            nullable=False,
-            server_default="und",
-        ),
+        sa.Column("language", sa.String(length=10), nullable=False, server_default="und"),
     )
 
     # Replace unique constraint
@@ -70,10 +67,7 @@ def upgrade() -> None:
 
     # Interactions: email metadata
     op.add_column("interactions", sa.Column("subject", sa.Text(), nullable=True))
-    op.add_column(
-        "interactions",
-        sa.Column("provider_message_id", sa.String(length=200), nullable=True),
-    )
+    op.add_column("interactions", sa.Column("provider_message_id", sa.String(length=200), nullable=True))
 
 
 def downgrade() -> None:
@@ -96,5 +90,5 @@ def downgrade() -> None:
     op.drop_column("customers", "language")
     op.drop_column("customers", "can_contact")
 
-    bind = op.get_bind()
-    template_category_enum.drop(bind, checkfirst=True)
+    # Safe enum drop
+    op.execute("DROP TYPE IF EXISTS template_category;")
