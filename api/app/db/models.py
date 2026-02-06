@@ -3,9 +3,14 @@ from __future__ import annotations
 import uuid
 import sqlalchemy as sa
 from sqlalchemy.orm import relationship
+from enum import Enum
+
 
 from app.db.base import Base
 
+class UserRole(str, Enum):
+    admin = "admin"
+    user = "user"
 
 class User(Base):
     __tablename__ = "users"
@@ -18,7 +23,9 @@ class User(Base):
     )
     email = sa.Column(sa.String(320), unique=True, nullable=False)
     password_hash = sa.Column(sa.String(255), nullable=False)
-    role = sa.Column(sa.String(20), nullable=False, server_default="user")
+    user_role_enum = sa.Enum(UserRole, name="user_role")
+    role = sa.Column(user_role_enum, nullable=False, server_default=UserRole.user.value)
+
 
     created_at = sa.Column(
         sa.DateTime(timezone=True),
@@ -131,9 +138,17 @@ class Interaction(Base):
         sa.ForeignKey("users.id"),
         nullable=False,
     )
+    interaction_channel_enum = sa.Enum(
+        "call", "email", "meeting", "whatsapp",
+        name="interaction_channel",
+    )
+    interaction_direction_enum = sa.Enum(
+        "inbound", "outbound",
+        name="interaction_direction",
+    )
 
-    channel = sa.Column(sa.String(50), nullable=False)
-    direction = sa.Column(sa.String(20), nullable=False)
+    channel = sa.Column(interaction_channel_enum, nullable=False)
+    direction = sa.Column(interaction_direction_enum, nullable=False)
     occurred_at = sa.Column(
         sa.DateTime(timezone=True),
         server_default=sa.text("now()"),

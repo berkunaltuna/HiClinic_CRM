@@ -23,7 +23,7 @@ services:
       DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
       JWT_SECRET_KEY: "dev-change-me"
       ADMIN_EMAILS: "admin@example.com"
-      EMAIL_PROVIDER: "fake"
+      EMAIL_PROVIDER: "smtp"
       SMTP_HOST: "smtp.gmail.com"
       SMTP_PORT: "587"
       SMTP_USERNAME: "info@healthclinicturkiye.com"
@@ -31,7 +31,7 @@ services:
       SMTP_FROM_EMAIL: "info@healthclinicturkiye.com"
       SMTP_FROM_NAME: "Health Clinic Turkiye"
       SMTP_USE_STARTTLS: "true"    
-      ports:
+    ports:
         - "8000:8000"
     volumes:
       - ./api:/app
@@ -47,7 +47,7 @@ services:
       DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
       JWT_SECRET_KEY: "dev-change-me"
       ADMIN_EMAILS: "admin@example.com"
-      EMAIL_PROVIDER: "fake"
+      EMAIL_PROVIDER: "smtp"
       SMTP_HOST: "smtp.gmail.com"
       SMTP_PORT: "587"
       SMTP_USERNAME: "info@healthclinicturkiye.com"
@@ -55,7 +55,7 @@ services:
       SMTP_FROM_EMAIL: "info@healthclinicturkiye.com"
       SMTP_FROM_NAME: "Health Clinic Turkiye"
       SMTP_USE_STARTTLS: "true"    
-      depends_on:
+    depends_on:
       db:
         condition: service_healthy
   

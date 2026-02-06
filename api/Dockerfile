@@ -14,6 +14,10 @@ COPY alembic.ini /app/alembic.ini
 COPY alembic /app/alembic
 COPY entrypoint.sh /app/entrypoint.sh
 
+RUN apt-get update \
+    && apt-get install -y postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000

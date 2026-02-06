@@ -8,6 +8,8 @@ from app.core.config import settings
 from app.db.models import User
 from app.db.session import get_db
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
+from app.db.models import User, UserRole
+
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -19,7 +21,7 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> TokenRe
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    role = "admin" if email_norm in settings.admin_emails else "user"
+    role = UserRole.admin if email_norm in settings.admin_emails else UserRole.user
     user = User(email=email_norm, password_hash=hash_password(payload.password), role=role)
     db.add(user)
     db.commit()
