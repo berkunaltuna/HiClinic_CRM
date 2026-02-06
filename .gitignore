@@ -1,0 +1,7 @@
+# Phase 4: secret management (DO NOT commit your real secrets)
+.env
+
+# Python / OS noise
+__pycache__/
+*.pyc
+.DS_Store

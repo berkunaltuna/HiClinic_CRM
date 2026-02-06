@@ -1,16 +1,19 @@
 services:
   db:
     image: postgres:16-alpine
+    # Phase 4: load DB credentials from .env (do not hardcode secrets)
+    env_file:
+      - ./.env  # <-- Phase 4 change
     environment:
-      POSTGRES_USER: crm
-      POSTGRES_PASSWORD: crm
-      POSTGRES_DB: crm
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crm}
+      POSTGRES_DB: ${POSTGRES_DB:-crm}
     #ports:
       #- "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U crm -d crm"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crm} -d ${POSTGRES_DB:-crm}"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -18,21 +21,26 @@ services:
   api:
     build:
       context: ./api
+    # Phase 4: load all app config (including SMTP password) from .env
+    env_file:
+      - ./.env  # <-- Phase 4 change
     environment:
-      APP_VERSION: "0.0.1"
-      DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
-      JWT_SECRET_KEY: "dev-change-me"
-      ADMIN_EMAILS: "admin@example.com"
-      EMAIL_PROVIDER: "smtp"
-      SMTP_HOST: "smtp.gmail.com"
-      SMTP_PORT: "587"
-      SMTP_USERNAME: "info@healthclinicturkiye.com"
-      SMTP_PASSWORD: "tzia pzng teum rpxh"
-      SMTP_FROM_EMAIL: "info@healthclinicturkiye.com"
-      SMTP_FROM_NAME: "Health Clinic Turkiye"
-      SMTP_USE_STARTTLS: "true"    
+      # Keep these explicit so it's obvious what the container uses.
+      # Values resolve from .env (or the defaults below).
+      APP_VERSION: ${APP_VERSION:-0.0.1}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://crm:crm@db:5432/crm}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-change-me}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@example.com}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}  # <-- Phase 4: DO NOT commit real value
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Health Clinic Turkiye}
+      SMTP_USE_STARTTLS: ${SMTP_USE_STARTTLS:-true}
     ports:
-        - "8000:8000"
+      - "8000:8000"
     volumes:
       - ./api:/app
     depends_on:
@@ -42,31 +50,37 @@ services:
   worker:
     build:
       context: ./worker
+    # Phase 4: load all app config (including SMTP password) from .env
+    env_file:
+      - ./.env  # <-- Phase 4 change
     environment:
-      APP_VERSION: "0.0.1"
-      DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm"
-      JWT_SECRET_KEY: "dev-change-me"
-      ADMIN_EMAILS: "admin@example.com"
-      EMAIL_PROVIDER: "smtp"
-      SMTP_HOST: "smtp.gmail.com"
-      SMTP_PORT: "587"
-      SMTP_USERNAME: "info@healthclinicturkiye.com"
-      SMTP_PASSWORD: "tzia pzng teum rpxh"
-      SMTP_FROM_EMAIL: "info@healthclinicturkiye.com"
-      SMTP_FROM_NAME: "Health Clinic Turkiye"
-      SMTP_USE_STARTTLS: "true"    
+      APP_VERSION: ${APP_VERSION:-0.0.1}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://crm:crm@db:5432/crm}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-change-me}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@example.com}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}  # <-- Phase 4: DO NOT commit real value
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Health Clinic Turkiye}
+      SMTP_USE_STARTTLS: ${SMTP_USE_STARTTLS:-true}
     depends_on:
       db:
         condition: service_healthy
-  
+
   test:
     build:
       context: ./api
+    # Phase 4: tests also load env from .env, but override a few values below.
+    env_file:
+      - ./.env  # <-- Phase 4 change
     environment:
-      APP_VERSION: "0.0.1"
-      DATABASE_URL: "postgresql+psycopg://crm:crm@db:5432/crm_test"
-      JWT_SECRET_KEY: "dev-change-me"
-      ADMIN_EMAILS: "admin@example.com"
+      APP_VERSION: ${APP_VERSION:-0.0.1}
+      DATABASE_URL: ${DATABASE_TEST_URL:-postgresql+psycopg://crm:crm@db:5432/crm_test}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-change-me}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@example.com}
       EMAIL_PROVIDER: "fake"
       PYTHONPATH: "/app"
     volumes:
@@ -74,9 +88,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: > 
-      sh -lc "psql postgresql://crm:crm@db:5432/postgres -c 'CREATE DATABASE crm_test;' || true &&
+    command: >
+      sh -lc "psql postgresql://$${POSTGRES_USER:-crm}:$${POSTGRES_PASSWORD:-crm}@db:5432/postgres -c 'CREATE DATABASE crm_test;' || true &&
       pip install -r requirements-dev.txt &&
       pytest -q"
+
 volumes:
   db_data:

@@ -115,3 +115,30 @@ To send real emails via Gmail SMTP, set:
 **Tip:** keep `SMTP_PASSWORD` out of git. Put it in a local `.env` and load it in docker compose, or pass it as an environment variable at runtime.
 
 Tests always force `EMAIL_PROVIDER=fake`.
+## Phase 4: .env + secret management
+
+**Do not commit real secrets to GitHub.** From Phase 4 onwards, Docker Compose loads configuration from a local `.env` file.
+
+1) Create your local env file:
+
+```bash
+cp .env.example .env
+```
+
+2) Edit `.env` and set at least:
+
+- `JWT_SECRET_KEY` (use a strong random string)
+- `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` (if you are using SMTP)
+- `ADMIN_EMAILS` (comma-separated or a single email)
+
+3) Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+### Why you should not commit SMTP passwords
+
+If you commit an SMTP/app password into git, anyone with repo access (or any leaked copy) can send emails as your company address. Treat it like a bank PIN:
+- keep it in `.env` locally
+- for CI (GitHub Actions), store it as a GitHub Secret and pass it as an env var during the workflow run
