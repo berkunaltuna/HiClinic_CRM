@@ -82,6 +82,7 @@ def create_template(
         name=payload.name,
         subject=payload.subject,
         body=payload.body,
+        provider_template_id=payload.provider_template_id,
         category=payload.category,
         language=lang,
     )

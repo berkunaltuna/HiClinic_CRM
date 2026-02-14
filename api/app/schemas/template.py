@@ -23,6 +23,8 @@ class TemplateBase(BaseModel):
 
     subject: Optional[str] = Field(default=None, max_length=300)
     body: str = Field(min_length=1)
+    # Optional provider-side template identifier (e.g. Twilio Content SID for WhatsApp)
+    provider_template_id: Optional[str] = Field(default=None, max_length=120)
 
     @model_validator(mode="after")
     def validate_template(self):
@@ -33,6 +35,12 @@ class TemplateBase(BaseModel):
         else:
             if self.subject:
                 raise ValueError("subject must be null/omitted for whatsapp templates")
+
+        # provider template id normalisation
+        if self.provider_template_id is not None and not self.provider_template_id.strip():
+            self.provider_template_id = None
+        if self.provider_template_id is not None:
+            self.provider_template_id = self.provider_template_id.strip()
 
         # language normalisation
         if self.language is not None and not self.language.strip():
@@ -52,6 +60,7 @@ class TemplateUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     subject: Optional[str] = Field(default=None, max_length=300)
     body: Optional[str] = Field(default=None, min_length=1)
+    provider_template_id: Optional[str] = Field(default=None, max_length=120)
     channel: Optional[TemplateChannel] = None
 
     # Phase 3 additions
@@ -81,6 +90,7 @@ class TemplateOut(BaseModel):
     language: Optional[str]
     subject: Optional[str]
     body: str
+    provider_template_id: Optional[str] = None
 
     class Config:
         from_attributes = True

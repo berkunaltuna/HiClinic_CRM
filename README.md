@@ -115,3 +115,62 @@ To send real emails via Gmail SMTP, set:
 **Tip:** keep `SMTP_PASSWORD` out of git. Put it in a local `.env` and load it in docker compose, or pass it as an environment variable at runtime.
 
 Tests always force `EMAIL_PROVIDER=fake`.
+## Phase 4: .env + secret management
+
+**Do not commit real secrets to GitHub.** From Phase 4 onwards, Docker Compose loads configuration from a local `.env` file.
+
+1) Create your local env file:
+
+```bash
+cp .env.example .env
+```
+
+2) Edit `.env` and set at least:
+
+- `JWT_SECRET_KEY` (use a strong random string)
+- `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` (if you are using SMTP)
+- `ADMIN_EMAILS` (comma-separated or a single email)
+
+3) Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+### Why you should not commit SMTP passwords
+
+If you commit an SMTP/app password into git, anyone with repo access (or any leaked copy) can send emails as your company address. Treat it like a bank PIN:
+- keep it in `.env` locally
+- for CI (GitHub Actions), store it as a GitHub Secret and pass it as an env var during the workflow run
+
+
+## Phase 4A (Twilio WhatsApp) quick test
+
+1) Put your Twilio credentials in `.env` (do **not** commit real secrets):
+
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `TWILIO_WHATSAPP_FROM` (e.g. `whatsapp:+14155238886` for sandbox)
+- `DEFAULT_COUNTRY_CODE` (default `+44`)
+
+2) Start the stack:
+
+```bash
+docker compose up --build
+```
+
+3) Create an outbound message (queued). The worker will pick it up and send:
+
+```bash
+curl -s -X POST http://localhost:8000/outbound-messages \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"customer_id":"<CUSTOMER_UUID>","channel":"whatsapp","body":"Hello from HiClinic CRM"}'
+```
+
+4) Check status:
+
+```bash
+curl -s http://localhost:8000/outbound-messages \
+  -H "Authorization: Bearer $TOKEN"
+```

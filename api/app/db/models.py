@@ -187,6 +187,8 @@ class Template(Base):
     name = sa.Column(sa.String(200), nullable=False)
     subject = sa.Column(sa.String(300))  # email only; whatsapp templates can leave this NULL
     body = sa.Column(sa.Text(), nullable=False)
+    # Optional provider-side template identifier (e.g. Twilio Content SID for WhatsApp)
+    provider_template_id = sa.Column(sa.String(120))
 
     template_category_enum = sa.Enum('transactional', 'marketing', name='template_category')
     category = sa.Column(template_category_enum, nullable=False, server_default='transactional')
@@ -208,3 +210,56 @@ class Template(Base):
         sa.UniqueConstraint('channel', 'name', 'language', name='uq_templates_channel_name_language'),
     )
 
+
+
+class OutboundMessage(Base):
+    __tablename__ = "outbound_messages"
+
+    id = sa.Column(
+        sa.UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        nullable=False,
+    )
+
+    owner_user_id = sa.Column(
+        sa.UUID(as_uuid=True),
+        sa.ForeignKey("users.id"),
+        nullable=False,
+    )
+
+    customer_id = sa.Column(
+        sa.UUID(as_uuid=True),
+        sa.ForeignKey("customers.id"),
+        nullable=False,
+    )
+
+    # Supported channels are expanded in later phases.
+    channel = sa.Column(sa.String(20), nullable=False)  # e.g. 'whatsapp', 'email', 'sms'
+
+    # queue status: queued -> sending -> sent | failed
+    status = sa.Column(sa.String(20), nullable=False, server_default="queued")
+
+    # If set, the worker can send using provider templates (e.g. Twilio WhatsApp Content SID)
+    template_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("templates.id"))
+
+    # Optional free-form body (e.g. WhatsApp session message)
+    body = sa.Column(sa.Text())
+
+    # Provider-specific variables for templates (stored as JSON)
+    variables = sa.Column(sa.JSON())
+
+    provider_message_id = sa.Column(sa.String(200))
+    last_error = sa.Column(sa.Text())
+    retry_count = sa.Column(sa.Integer(), nullable=False, server_default="0")
+
+    created_at = sa.Column(
+        sa.DateTime(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+    )
+    updated_at = sa.Column(
+        sa.DateTime(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+    )
