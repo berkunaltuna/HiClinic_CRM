@@ -50,6 +50,8 @@ def create_outbound_message(
         template_id=payload.template_id,
         body=payload.body,
         variables=payload.variables,
+        not_before_at=payload.not_before_at,
+        cancel_on_inbound=payload.cancel_on_inbound,
     )
     db.add(msg)
     db.commit()

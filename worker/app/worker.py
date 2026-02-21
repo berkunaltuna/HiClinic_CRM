@@ -60,12 +60,19 @@ def _render_text(text_tpl: str, context: Mapping[str, Any]) -> str:
 def process_once(engine: Engine) -> int:
     processed = 0
     with engine.begin() as conn:
+        # Wait for DB migrations to create required tables.
+        exists = conn.execute(text("SELECT to_regclass('public.outbound_messages')")).scalar()
+        if not exists:
+            print("[worker] waiting for migrations (outbound_messages missing)")
+            time.sleep(2)
+            return 0
         rows = conn.execute(
             text(
                 """
                 SELECT id, owner_user_id, customer_id, channel, template_id, body, variables, retry_count
                 FROM outbound_messages
                 WHERE status = 'queued'
+                  AND (not_before_at IS NULL OR not_before_at <= now())
                   AND retry_count < :max_retries
                 ORDER BY created_at ASC
                 LIMIT 10

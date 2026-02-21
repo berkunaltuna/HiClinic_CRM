@@ -70,6 +70,22 @@ services:
       db:
         condition: service_healthy
 
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      # Prevent the bind-mount from hiding node_modules installed in the image.
+      - /app/node_modules
+    depends_on:
+      - api
+    # Run in dev mode for faster startup (no production build).
+    command: sh -lc "npm install && npm run dev -- -H 0.0.0.0 -p 3000"
+
   test:
     build:
       context: ./api

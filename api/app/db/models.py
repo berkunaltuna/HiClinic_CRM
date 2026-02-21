@@ -64,6 +64,9 @@ class Customer(Base):
     can_contact = sa.Column(sa.Boolean(), nullable=False, server_default=sa.text('true'))
     language = sa.Column(sa.String(10))
 
+    # Phase 4B: simple funnel stage on the customer record.
+    stage = sa.Column(sa.String(40), nullable=False, server_default="new")
+
     created_at = sa.Column(
         sa.DateTime(timezone=True),
         server_default=sa.text("now()"),
@@ -80,6 +83,14 @@ class Customer(Base):
     interactions = relationship(
         "Interaction", back_populates="customer", cascade="all, delete-orphan"
     )
+
+    # Phase 4B tags
+    tags = relationship("CustomerTag", back_populates="customer", cascade="all, delete-orphan")
+
+    @property
+    def tag_names(self) -> list[str]:
+        # Convenience for API schemas.
+        return [ct.tag.name for ct in (self.tags or []) if ct.tag is not None]
 
 
 class Deal(Base):
@@ -249,6 +260,13 @@ class OutboundMessage(Base):
     # Provider-specific variables for templates (stored as JSON)
     variables = sa.Column(sa.JSON())
 
+    # Optional scheduling: worker should only send after this time (UTC).
+    not_before_at = sa.Column(sa.DateTime(timezone=True))
+
+    # Phase 4C: allow queued messages to be cancelled when an inbound reply arrives.
+    cancel_on_inbound = sa.Column(sa.Boolean(), nullable=False, server_default=sa.text("false"))
+    cancelled_at = sa.Column(sa.DateTime(timezone=True))
+
     provider_message_id = sa.Column(sa.String(200))
     last_error = sa.Column(sa.Text())
     retry_count = sa.Column(sa.Integer(), nullable=False, server_default="0")
@@ -262,4 +280,134 @@ class OutboundMessage(Base):
         sa.DateTime(timezone=True),
         server_default=sa.text("now()"),
         nullable=False,
+    )
+
+
+class Workflow(Base):
+    """Simple automation rules (Phase 4C).
+
+    A workflow listens for a trigger event (e.g. 'message.received') and, when
+    conditions match, enqueues actions (e.g. queue an OutboundMessage).
+    """
+
+    __tablename__ = "workflows"
+
+    id = sa.Column(
+        sa.UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+        nullable=False,
+    )
+
+    owner_user_id = sa.Column(
+        sa.UUID(as_uuid=True),
+        sa.ForeignKey("users.id"),
+        nullable=False,
+    )
+
+    name = sa.Column(sa.String(200), nullable=False)
+    trigger_event = sa.Column(sa.String(80), nullable=False)  # e.g. 'message.received'
+    is_enabled = sa.Column(sa.Boolean(), nullable=False, server_default=sa.text("true"))
+
+    # Minimal JSON-based rule definition
+    conditions = sa.Column(sa.JSON())  # e.g. {"channel": "whatsapp", "is_new_customer": true}
+    actions = sa.Column(sa.JSON())  # e.g. [{"type":"send_template","template_name":"welcome"}]
+
+    created_at = sa.Column(
+        sa.DateTime(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+    )
+    updated_at = sa.Column(
+        sa.DateTime(timezone=True),
+        server_default=sa.text("now()"),
+        nullable=False,
+    )
+
+
+class Tag(Base):
+    """Tag dictionary (Phase 4B)."""
+
+    __tablename__ = "tags"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+
+    owner_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False)
+    name = sa.Column(sa.String(80), nullable=False)
+    color = sa.Column(sa.String(20))
+
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    updated_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    __table_args__ = (
+        sa.UniqueConstraint("owner_user_id", "name", name="uq_tags_owner_name"),
+    )
+
+
+class CustomerTag(Base):
+    """Many-to-many link between customers and tags (Phase 4B)."""
+
+    __tablename__ = "customer_tags"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+
+    owner_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False)
+    customer_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("customers.id"), nullable=False)
+    tag_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("tags.id"), nullable=False)
+
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    customer = relationship("Customer", back_populates="tags")
+    tag = relationship("Tag")
+
+    __table_args__ = (
+        sa.UniqueConstraint("customer_id", "tag_id", name="uq_customer_tags_customer_tag"),
+        sa.Index("ix_customer_tags_owner_customer", "owner_user_id", "customer_id"),
+    )
+
+
+class OutcomeType(str, Enum):
+    consult_booked = "consult_booked"
+    deposit_paid = "deposit_paid"
+    treatment_done = "treatment_done"
+    lost = "lost"
+
+
+class OutcomeEvent(Base):
+    """Customer outcome events (Phase 5B).
+
+    Stores business outcomes such as consultation booked, deposit paid, etc.
+    Used for KPI dashboards and conversion tracking.
+    """
+
+    __tablename__ = "outcome_events"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+
+    owner_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False)
+    customer_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("customers.id"), nullable=False)
+
+    outcome_type_enum = sa.Enum(
+        OutcomeType,
+        name="outcome_type",
+        create_type=False,  # prevents duplicate enum creation
+    )
+
+    type = sa.Column(outcome_type_enum, nullable=False)
+
+    amount = sa.Column(sa.Numeric(12, 2))  # optional: deposit amount / treatment value
+    notes = sa.Column(sa.Text())
+    # NOTE: "metadata" is a reserved attribute name in SQLAlchemy Declarative.
+    # Keep the DB column name as "metadata" (migration already created it),
+    # but expose it on the model as "meta".
+    meta = sa.Column("metadata", sa.JSON(), nullable=True)
+
+
+    occurred_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    __table_args__ = (
+        sa.Index("ix_outcome_events_owner_occurred", "owner_user_id", "occurred_at"),
+        sa.Index("ix_outcome_events_owner_type", "owner_user_id", "type"),
     )

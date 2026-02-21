@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 OutboundChannel = Literal["whatsapp", "sms", "email"]
-OutboundStatus = Literal["queued", "sending", "sent", "failed"]
+OutboundStatus = Literal["queued", "sending", "sent", "failed", "cancelled"]
 
 
 class OutboundMessageCreate(BaseModel):
@@ -23,6 +23,12 @@ class OutboundMessageCreate(BaseModel):
 
     # Provider-specific variables (e.g. Twilio content_variables: {"1": "02/15", "2": "3pm"})
     variables: Optional[Dict[str, Any]] = None
+
+    # Optional scheduling: worker will only send after this timestamp (UTC).
+    not_before_at: Optional[datetime] = None
+
+    # Phase 4C: if true, queued messages will be cancelled when an inbound reply arrives.
+    cancel_on_inbound: bool = False
 
     @model_validator(mode="after")
     def validate_payload(self):
@@ -41,6 +47,9 @@ class OutboundMessageOut(BaseModel):
     template_id: Optional[UUID] = None
     body: Optional[str] = None
     variables: Optional[dict] = None
+    not_before_at: Optional[datetime] = None
+    cancel_on_inbound: bool = False
+    cancelled_at: Optional[datetime] = None
     provider_message_id: Optional[str] = None
     last_error: Optional[str] = None
     retry_count: int = 0

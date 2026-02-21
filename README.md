@@ -174,3 +174,194 @@ curl -s -X POST http://localhost:8000/outbound-messages \
 curl -s http://localhost:8000/outbound-messages \
   -H "Authorization: Bearer $TOKEN"
 ```
+
+
+## Phase 4B: inbound WhatsApp → CRM lead
+
+This phase adds a Twilio webhook endpoint that:
+
+- creates a **Customer** automatically when an unknown WhatsApp number messages you ("lead")
+- stores the message as an **Interaction** (inbound)
+
+Endpoint:
+
+- `POST /webhooks/twilio/whatsapp`
+
+### Local dev note
+
+Twilio can only call your webhook if it can reach your machine (public URL). For local testing you typically use one of:
+
+- `ngrok http 8000`
+- `cloudflared tunnel --url http://localhost:8000`
+
+Then set your Twilio WhatsApp webhook to:
+
+- `https://<your-public-url>/webhooks/twilio/whatsapp`
+
+
+## Phase 5A: Inbox API + minimal UI
+
+Phase 5 adds an **operator inbox** on top of the backend, plus a minimal Next.js frontend.
+
+After starting the stack:
+
+- API docs: `http://localhost:8000/docs`
+- Frontend UI: `http://localhost:3000`
+
+The frontend stores the JWT in browser `localStorage`.
+
+### Inbox endpoints
+
+- `GET /inbox/customers?bucket=followup_due|open|waiting|closed&tag=...&stage=...&q=...`
+- `GET /inbox/customers/{customer_id}/thread`
+- `POST /inbox/customers/{customer_id}/stage`
+- `POST /inbox/customers/{customer_id}/followup`
+- `POST /inbox/customers/{customer_id}/tags/add`
+- `POST /inbox/customers/{customer_id}/tags/remove`
+- `POST /inbox/customers/{customer_id}/send-text`
+- `POST /inbox/customers/{customer_id}/send-template`
+
+
+## Phase 5B: Outcomes + Analytics
+
+Record business outcomes:
+
+- `POST /outcomes` with types: `consult_booked`, `deposit_paid`, `treatment_done`, `lost`
+
+Analytics endpoints:
+
+- `GET /analytics/summary`
+- `GET /analytics/leads-by-day`
+- `GET /analytics/templates`
+
+### Optional: webhook signature validation
+
+By default, signature validation is **OFF** to keep local dev easy.
+
+To enable validation (recommended in production):
+
+- `TWILIO_VALIDATE_SIGNATURE=true`
+- `TWILIO_WEBHOOK_BASE_URL=https://<your-public-url>`
+
+
+## Phase 4C: workflow automation (auto-replies, delayed follow-ups)
+
+This phase adds **Workflows**: simple automation rules that listen for events and enqueue actions.
+
+Current trigger implemented:
+
+- `message.received` (fired by the Twilio WhatsApp webhook)
+
+### New in 4B/4C (this repo)
+
+- **Customer stage**: `customers.stage` (default: `new`)
+- **Tags**: `tags` + `customer_tags` (owner-scoped)
+- **Auto-tagging on inbound**: always adds `whatsapp`; adds `new_lead` when a customer is auto-created
+- **Optional keyword tagging**: set `KEYWORD_TAGS_JSON` to map keywords to tags
+- **Cancellable scheduled messages**: outbound messages can set `cancel_on_inbound=true` and will be cancelled when the lead replies
+
+### Workflow actions supported
+
+Actions are stored as JSON array in `workflows.actions`:
+
+- `send_template` (existing)
+- `send_text` (existing)
+- `add_tag` (new)
+- `set_stage` (new)
+- `set_follow_up` (new; sets `customers.next_follow_up_at`)
+
+Both `send_template` and `send_text` support:
+
+- `delay_minutes` (schedule)
+- `cancel_on_inbound` (auto-cancel on reply)
+
+### Example workflow (auto-reply + tag + stage)
+
+```json
+{
+  "name": "Welcome new WhatsApp lead",
+  "trigger_event": "message.received",
+  "is_enabled": true,
+  "conditions": {"channel": "whatsapp", "is_new_customer": true},
+  "actions": [
+    {"type": "add_tag", "tag": "auto_replied"},
+    {"type": "set_stage", "stage": "contacted"},
+    {"type": "send_text", "body": "Thanks! We'll be in touch.", "delay_minutes": 60, "cancel_on_inbound": true}
+  ]
+}
+```
+
+### Test it (Pytest)
+
+Tests require a **test database**.
+
+1) Create a test DB in Postgres (example):
+
+```bash
+createdb crm_test
+```
+
+2) Run tests with `DATABASE_URL` containing the word `test`:
+
+```bash
+cd api
+export DATABASE_URL="postgresql+psycopg://crm:crm@localhost:5432/crm_test"
+pytest -q
+```
+
+The `test_phase4b4c.py` test covers:
+
+- inbound WhatsApp → auto-create customer
+- auto-tags (`whatsapp`, `new_lead`) + keyword tag
+- workflow actions (`add_tag`, `set_stage`, `send_text` delayed)
+- `cancel_on_inbound` cancelling a queued message when the lead replies
+
+### Create a simple auto-reply workflow (Swagger UI)
+
+1) Open Swagger:
+
+- http://localhost:8000/docs
+
+2) Authorize (JWT):
+
+- register/login, copy `access_token`
+- click **Authorize** → paste: `Bearer <token>`
+
+3) Create a workflow:
+
+`POST /workflows`
+
+Example body (auto-reply only for new customers):
+
+```json
+{
+  "name": "Auto-reply to new WhatsApp leads",
+  "trigger_event": "message.received",
+  "is_enabled": true,
+  "conditions": {
+    "channel": "whatsapp",
+    "is_new_customer": true
+  },
+  "actions": [
+    {
+      "type": "send_text",
+      "body": "Thanks for messaging HiClinIQ. A coordinator will reply shortly."
+    }
+  ]
+}
+```
+
+### Delayed follow-up example
+
+Use `delay_minutes` on an action:
+
+```json
+{
+  "type": "send_text",
+  "body": "Just checking in — do you want to book a consultation?",
+  "delay_minutes": 60
+}
+```
+
+The worker will only send queued outbound messages when `not_before_at` is in the past.
+```

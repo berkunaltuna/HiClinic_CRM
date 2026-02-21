@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 import os
+import json
+
+
+def _get_bool(name: str, default: bool = False) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "y", "on")
 
 
 class Settings:
@@ -38,6 +46,36 @@ class Settings:
     smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "")
     smtp_from_name: str = os.getenv("SMTP_FROM_NAME", "")
     smtp_use_starttls: bool = os.getenv("SMTP_USE_STARTTLS", "true").lower() in ("1","true","yes","y","on")
+
+
+    # Phase 4: WhatsApp (Twilio) + automation
+    default_country_code: str = os.getenv("DEFAULT_COUNTRY_CODE", "+44")
+
+    # Twilio (used by webhook validation; worker reads env directly)
+    twilio_account_sid: str | None = os.getenv("TWILIO_ACCOUNT_SID")
+    twilio_auth_token: str | None = os.getenv("TWILIO_AUTH_TOKEN")
+    twilio_whatsapp_from: str | None = os.getenv("TWILIO_WHATSAPP_FROM")
+
+    # Webhook signature validation requires a public URL; default OFF for local dev.
+    twilio_validate_signature: bool = _get_bool("TWILIO_VALIDATE_SIGNATURE", False)
+    twilio_webhook_base_url: str | None = os.getenv("TWILIO_WEBHOOK_BASE_URL")
+
+    # Automation defaults
+    automation_welcome_template_name: str = os.getenv(
+        "AUTOMATION_WELCOME_TEMPLATE_NAME", "welcome"
+    )
+    automation_welcome_fallback_text: str = os.getenv(
+        "AUTOMATION_WELCOME_FALLBACK_TEXT",
+        "Thanks for contacting us. A coordinator will reply shortly.",
+    )
+
+    # Phase 4B: optional keyword-to-tag mapping for inbound messages.
+    # Example: {"implant": "implant_interest", "hair": "hair_transplant"}
+    _keyword_tags_raw: str = os.getenv("KEYWORD_TAGS_JSON", "{}")
+    try:
+        keyword_tags: dict[str, str] = json.loads(_keyword_tags_raw) if _keyword_tags_raw else {}
+    except Exception:
+        keyword_tags = {}
 
 
 settings = Settings()
