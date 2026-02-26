@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useRequireAuth } from "@/lib/useRequireAuth";
 
 type Summary = {
   start: string;
@@ -24,6 +25,7 @@ type TemplateRow = {
 };
 
 export default function AnalyticsPage() {
+  useRequireAuth();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [leads, setLeads] = useState<LeadsPoint[]>([]);
   const [templates, setTemplates] = useState<TemplateRow[]>([]);
@@ -50,42 +52,57 @@ export default function AnalyticsPage() {
   }, []);
 
   return (
-    <div>
-      <h2>Analytics</h2>
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+    <div className="grid">
+      <div>
+        <h2 style={{ margin: 0 }}>Analytics</h2>
+        <div className="muted" style={{ marginTop: 4 }}>
+          Outcome events, funnel conversion and messaging performance.
+        </div>
+      </div>
+      {error && <div style={{ color: "var(--danger)" }}>{error}</div>}
 
       {summary && (
-        <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-          <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-            <strong>Leads</strong>
-            <div style={{ fontSize: 28 }}>{summary.leads_created}</div>
+        <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+          <div className="card">
+            <div className="cardBody">
+              <strong>Leads</strong>
+              <div style={{ fontSize: 28, marginTop: 6 }}>{summary.leads_created}</div>
+            </div>
           </div>
-          <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-            <strong>Inbound</strong>
-            <div style={{ fontSize: 28 }}>{summary.inbound_received}</div>
+          <div className="card">
+            <div className="cardBody">
+              <strong>Inbound</strong>
+              <div style={{ fontSize: 28, marginTop: 6 }}>{summary.inbound_received}</div>
+            </div>
           </div>
-          <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-            <strong>Outbound Sent</strong>
-            <div style={{ fontSize: 28 }}>{summary.outbound_sent}</div>
+          <div className="card">
+            <div className="cardBody">
+              <strong>Outbound sent</strong>
+              <div style={{ fontSize: 28, marginTop: 6 }}>{summary.outbound_sent}</div>
+            </div>
           </div>
-          <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-            <strong>Median First Response</strong>
-            <div style={{ fontSize: 28 }}>
-              {summary.median_first_response_seconds ? Math.round(summary.median_first_response_seconds / 60) + "m" : "—"}
+          <div className="card">
+            <div className="cardBody">
+              <strong>Median first response</strong>
+              <div style={{ fontSize: 28, marginTop: 6 }}>
+                {summary.median_first_response_seconds ? Math.round(summary.median_first_response_seconds / 60) + "m" : "—"}
+              </div>
             </div>
           </div>
         </div>
       )}
 
       {summary && (
-        <div style={{ marginTop: 16, border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-          <strong>Outcomes</strong>
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginTop: 8 }}>
+        <div className="card">
+          <div className="cardHeader">
+            <strong>Outcomes</strong>
+          </div>
+          <div className="cardBody" style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             {Object.entries(summary.outcomes || {}).map(([k, v]) => (
               <div key={k}>
-                <div style={{ color: "#666" }}>{k}</div>
-                <div style={{ fontSize: 22 }}>{v}</div>
-                <div style={{ color: "#666", fontSize: 12 }}>
+                <div className="muted">{k}</div>
+                <div style={{ fontSize: 22, fontWeight: 800 }}>{v}</div>
+                <div className="muted" style={{ fontSize: 12 }}>
                   rate: {((summary.conversion_rates?.[k] || 0) * 100).toFixed(1)}%
                 </div>
               </div>
@@ -94,9 +111,11 @@ export default function AnalyticsPage() {
         </div>
       )}
 
-      <div style={{ marginTop: 16, border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-        <strong>Leads by day</strong>
-        <div style={{ marginTop: 8, fontFamily: "monospace", fontSize: 12, color: "#333" }}>
+      <div className="card">
+        <div className="cardHeader">
+          <strong>Leads by day</strong>
+        </div>
+        <div className="cardBody" style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: 12, color: "#333" }}>
           {leads.map((p) => (
             <div key={p.date}>
               {p.date}  {"|"}  {"#".repeat(Math.min(p.leads, 50))} ({p.leads})
@@ -106,30 +125,32 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      <div style={{ marginTop: 16, border: "1px solid #eee", borderRadius: 8, padding: 12 }}>
-        <strong>Template effectiveness (reply within 7 days)</strong>
-        <div style={{ overflowX: "auto", marginTop: 8 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <div className="card">
+        <div className="cardHeader">
+          <strong>Template effectiveness (reply within 7 days)</strong>
+        </div>
+        <div className="cardBody" style={{ overflowX: "auto" }}>
+          <table className="table">
             <thead>
               <tr style={{ textAlign: "left" }}>
-                <th style={{ borderBottom: "1px solid #eee", padding: 8 }}>Template</th>
-                <th style={{ borderBottom: "1px solid #eee", padding: 8 }}>Sent</th>
-                <th style={{ borderBottom: "1px solid #eee", padding: 8 }}>Replied</th>
-                <th style={{ borderBottom: "1px solid #eee", padding: 8 }}>Rate</th>
+                <th>Template</th>
+                <th>Sent</th>
+                <th>Replied</th>
+                <th>Rate</th>
               </tr>
             </thead>
             <tbody>
               {templates.map((t) => (
                 <tr key={t.template_id}>
-                  <td style={{ borderBottom: "1px solid #f3f3f3", padding: 8 }}>{t.template_name}</td>
-                  <td style={{ borderBottom: "1px solid #f3f3f3", padding: 8 }}>{t.sent}</td>
-                  <td style={{ borderBottom: "1px solid #f3f3f3", padding: 8 }}>{t.replied_within_7d}</td>
-                  <td style={{ borderBottom: "1px solid #f3f3f3", padding: 8 }}>{(t.reply_rate_7d * 100).toFixed(1)}%</td>
+                  <td>{t.template_name}</td>
+                  <td>{t.sent}</td>
+                  <td>{t.replied_within_7d}</td>
+                  <td>{(t.reply_rate_7d * 100).toFixed(1)}%</td>
                 </tr>
               ))}
               {!templates.length && (
                 <tr>
-                  <td colSpan={4} style={{ padding: 8, color: "#666" }}>
+                  <td colSpan={4} className="muted">
                     No template data yet.
                   </td>
                 </tr>

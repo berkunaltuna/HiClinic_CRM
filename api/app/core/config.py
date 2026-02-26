@@ -33,6 +33,18 @@ class Settings:
         if e.strip()
     ]
 
+    # CORS (needed for browser-based frontend calls)
+    # Comma-separated list of allowed origins.
+    # Example: CORS_ORIGINS="http://localhost:3000,http://127.0.0.1:3000"
+    cors_origins: list[str] = [
+        o.strip()
+        for o in os.getenv(
+            "CORS_ORIGINS",
+            "http://localhost:3000,http://127.0.0.1:3000",
+        ).split(",")
+        if o.strip()
+    ]
+
 
     # Email provider (Phase 3): 'fake' for dev/tests.
     email_provider: str = os.getenv('EMAIL_PROVIDER', 'fake').lower()

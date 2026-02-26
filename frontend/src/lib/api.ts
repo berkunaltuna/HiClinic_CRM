@@ -7,6 +7,10 @@ export function getToken(): string | null {
 
 export function setToken(token: string) {
   if (typeof window === "undefined") return;
+  if (!token) {
+    window.localStorage.removeItem("hiclinic_token");
+    return;
+  }
   window.localStorage.setItem("hiclinic_token", token);
 }
 

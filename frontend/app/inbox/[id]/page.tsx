@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useRequireAuth } from "@/lib/useRequireAuth";
 
 type ThreadItem = {
   kind: string;
@@ -14,6 +15,7 @@ type ThreadItem = {
 };
 
 export default function CustomerThread({ params }: { params: { id: string } }) {
+  useRequireAuth();
   const customerId = params.id;
   const [items, setItems] = useState<ThreadItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -49,16 +51,21 @@ export default function CustomerThread({ params }: { params: { id: string } }) {
   }
 
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2 style={{ margin: 0 }}>Conversation</h2>
-        <a href="/inbox">← Back</a>
+    <div className="grid">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <div>
+          <a href="/inbox">← Inbox</a>
+          <h2 style={{ margin: "6px 0 0" }}>Conversation</h2>
+        </div>
+        <a className="btn" href={`/customers/${customerId}`}>
+          Customer details
+        </a>
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <div style={{ color: "var(--danger)" }}>{error}</div>}
 
-      <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, marginTop: 12 }}>
-        <div style={{ display: "grid", gap: 8 }}>
+      <div className="card">
+        <div className="cardBody" style={{ display: "grid", gap: 8 }}>
           {items.map((it) => (
             <div key={it.id} style={{ display: "flex", justifyContent: it.direction === "outbound" ? "flex-end" : "flex-start" }}>
               <div
@@ -78,17 +85,17 @@ export default function CustomerThread({ params }: { params: { id: string } }) {
             </div>
           ))}
           {!items.length && <p style={{ color: "#666" }}>No messages yet.</p>}
-        </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+      <div className="card">
+        <div className="cardBody" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <input
           value={body}
           onChange={(e) => setBody(e.target.value)}
           placeholder="Type a WhatsApp message..."
-          style={{ flex: 1, padding: 10 }}
+          style={{ flex: 1, minWidth: 260 }}
         />
-        <button onClick={sendText} style={{ padding: "10px 14px" }}>
+        <button onClick={sendText} className="btn btnPrimary">
           Send
         </button>
       </div>

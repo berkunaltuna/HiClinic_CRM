@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { useRequireAuth } from "@/lib/useRequireAuth";
 
 type InboxCustomer = {
   id: string;
@@ -17,6 +18,7 @@ type InboxCustomer = {
 };
 
 export default function InboxPage() {
+  useRequireAuth();
   const [bucket, setBucket] = useState<string>("followup_due");
   const [q, setQ] = useState<string>("");
   const [rows, setRows] = useState<InboxCustomer[]>([]);
@@ -41,55 +43,65 @@ export default function InboxPage() {
   }, [query]);
 
   return (
-    <div>
-      <h2>Inbox</h2>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
-        <select value={bucket} onChange={(e) => setBucket(e.target.value)}>
+    <div className="grid">
+      <div>
+        <h2 style={{ margin: 0 }}>Inbox</h2>
+        <div className="muted" style={{ marginTop: 4 }}>
+          Work follow-ups and ongoing conversations.
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="cardBody" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <select value={bucket} onChange={(e) => setBucket(e.target.value)}>
           <option value="followup_due">Follow-up due</option>
           <option value="open">Open</option>
           <option value="waiting">Waiting</option>
           <option value="closed">Closed</option>
-        </select>
-        <input
-          placeholder="Search name/phone/email"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          style={{ padding: 8, minWidth: 260 }}
-        />
+          </select>
+          <input
+            placeholder="Search name/phone/email"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            style={{ minWidth: 260 }}
+          />
+        </div>
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <div style={{ color: "var(--danger)" }}>{error}</div>}
 
-      <div style={{ display: "grid", gap: 8 }}>
-        {rows.map((c) => (
-          <a
-            key={c.id}
-            href={`/inbox/${c.id}`}
-            style={{
-              border: "1px solid #eee",
-              padding: 12,
-              borderRadius: 8,
-              textDecoration: "none",
-              color: "inherit",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <strong>{c.name}</strong>
-              <span style={{ color: "#666" }}>{c.bucket} · {c.stage}</span>
-            </div>
-            <div style={{ color: "#666", marginTop: 6 }}>
-              {c.phone || c.email || ""}
-            </div>
-            <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {c.tags?.slice(0, 8).map((t) => (
-                <span key={t} style={{ fontSize: 12, border: "1px solid #ddd", borderRadius: 999, padding: "2px 8px" }}>
-                  {t}
-                </span>
-              ))}
-            </div>
-          </a>
-        ))}
-        {!rows.length && !error && <p style={{ color: "#666" }}>No customers in this bucket.</p>}
+      <div className="card">
+        <div className="cardHeader" style={{ display: "flex", justifyContent: "space-between" }}>
+          <strong>Conversations</strong>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {rows.length} items
+          </span>
+        </div>
+        <div className="cardBody" style={{ display: "grid", gap: 10 }}>
+          {rows.map((c) => (
+            <a key={c.id} href={`/inbox/${c.id}`} className="card" style={{ boxShadow: "none" }}>
+              <div className="cardBody">
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+                  <div style={{ fontWeight: 800 }}>{c.name}</div>
+                  <span className="muted" style={{ fontSize: 13 }}>
+                    {c.bucket} · {c.stage}
+                  </span>
+                </div>
+                <div className="muted" style={{ marginTop: 6 }}>
+                  {c.phone || c.email || ""}
+                </div>
+                <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {c.tags?.slice(0, 8).map((t) => (
+                    <span key={t} className="chip">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </a>
+          ))}
+          {!rows.length && !error && <p className="muted">No customers in this bucket.</p>}
+        </div>
       </div>
     </div>
   );
