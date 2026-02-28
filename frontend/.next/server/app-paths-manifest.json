@@ -1,5 +1,5 @@
 {
-  "/(auth)/login/page": "app/(auth)/login/page.js",
   "/(app)/dashboard/page": "app/(app)/dashboard/page.js",
+  "/(auth)/login/page": "app/(auth)/login/page.js",
   "/(app)/pipeline/page": "app/(app)/pipeline/page.js"
 }
