@@ -385,7 +385,9 @@ class OutcomeEvent(Base):
     id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
 
     owner_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False)
-    customer_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("customers.id"), nullable=False)
+    # Migration allows customer_id to be nullable (and also supports deal_id).
+    customer_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("customers.id"), nullable=True)
+    deal_id = sa.Column(sa.UUID(as_uuid=True), nullable=True)
 
     outcome_type_enum = sa.Enum(
         OutcomeType,
@@ -393,7 +395,10 @@ class OutcomeEvent(Base):
         create_type=False,  # prevents duplicate enum creation
     )
 
-    type = sa.Column(outcome_type_enum, nullable=False)
+    # DB column name is "outcome" (see migration 0007), but historically the
+    # code/schema used the concept "type". Map the model attribute "type" to
+    # the underlying "outcome" column to avoid column-name mismatches.
+    type = sa.Column("outcome", outcome_type_enum, nullable=False)
 
     amount = sa.Column(sa.Numeric(12, 2))  # optional: deposit amount / treatment value
     notes = sa.Column(sa.Text())
@@ -409,5 +414,6 @@ class OutcomeEvent(Base):
 
     __table_args__ = (
         sa.Index("ix_outcome_events_owner_occurred", "owner_user_id", "occurred_at"),
-        sa.Index("ix_outcome_events_owner_type", "owner_user_id", "type"),
+        # Keep the index name compatible with the migration (owner_outcome).
+        sa.Index("ix_outcome_events_owner_outcome", "owner_user_id", "outcome"),
     )

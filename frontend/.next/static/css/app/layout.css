@@ -145,7 +145,11 @@ input:focus, select:focus, textarea:focus {
 .layout {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: var(--sidebar-w, 260px) 1fr;
+}
+
+.layoutCollapsed {
+  --sidebar-w: 72px;
 }
 
 .sidebar {
@@ -156,6 +160,29 @@ input:focus, select:focus, textarea:focus {
   position: sticky;
   top: 0;
   height: 100vh;
+  overflow: hidden;
+}
+
+.sidebarCollapsed {
+  padding: 18px 10px;
+}
+
+.logoWrap {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(136, 194, 199, 0.10);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.logoImg {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  display: block;
 }
 
 .sidebarNav {
@@ -208,4 +235,80 @@ input:focus, select:focus, textarea:focus {
   .sidebar { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--border); }
   .split { grid-template-columns: 1fr; }
 }
+
+/* Kanban */
+.kanban {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(240px, 1fr));
+  grid-gap: 12px;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.kanbanCol {
+  min-height: 60vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255,255,255,0.55);
+}
+
+.kanbanColHeader {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kanbanCards { padding: 10px; display: grid; grid-gap: 10px; gap: 10px; }
+
+.cardMini {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 10px;
+  cursor: pointer;
+}
+
+.cardMini:hover { box-shadow: var(--shadow); }
+
+.drawerOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17,24,39,0.35);
+  z-index: 60;
+}
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(520px, 100vw);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  z-index: 70;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.drawerHeader {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.drawerBody { padding: 14px 16px; overflow: auto; }
+
+.kpi {
+  padding: 14px 16px;
+}
+
+.kpiLabel { color: var(--muted); font-size: 12px; }
+.kpiValue { font-weight: 900; font-size: 20px; margin-top: 6px; }
+
 

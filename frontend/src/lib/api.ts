@@ -1,17 +1,35 @@
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+const TOKEN_KEY = "hiclinic_token";
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
-  return window.localStorage.getItem("hiclinic_token");
+  return window.localStorage.getItem(TOKEN_KEY);
 }
 
-export function setToken(token: string) {
+export function setToken(token: string | null) {
   if (typeof window === "undefined") return;
   if (!token) {
-    window.localStorage.removeItem("hiclinic_token");
+    window.localStorage.removeItem(TOKEN_KEY);
     return;
   }
-  window.localStorage.setItem("hiclinic_token", token);
+  window.localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearToken() {
+  setToken(null);
+}
+
+export class ApiError extends Error {
+  status: number;
+  bodyText?: string;
+
+  constructor(message: string, status: number, bodyText?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.bodyText = bodyText;
+  }
 }
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -21,11 +39,12 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
   const res = await fetch(`${API_URL}${path}`, { ...init, headers });
+
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    const text = await res.text().catch(() => "");
+    throw new ApiError(text || `HTTP ${res.status}`, res.status, text);
   }
-  // 204 no content
+
   if (res.status === 204) return undefined as unknown as T;
   return (await res.json()) as T;
 }
