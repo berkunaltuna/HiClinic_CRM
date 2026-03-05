@@ -303,3 +303,9 @@ input:focus, select:focus, textarea:focus {
 .kpiLabel { color: var(--muted); font-size: 12px; }
 .kpiValue { font-weight: 900; font-size: 20px; margin-top: 6px; }
 
+/* Simple modal (used for admin template creation) */
+.modalOverlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; padding: 18px; z-index: 80; }
+.modal { width: min(760px, 96vw); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 14px 40px rgba(0,0,0,.18); overflow: hidden; }
+.modalHeader { padding: 12px 14px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, #fff, rgba(0,0,0,.02)); }
+.modalBody { padding: 14px; }
+

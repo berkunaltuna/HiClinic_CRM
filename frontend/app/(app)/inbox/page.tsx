@@ -20,7 +20,10 @@ export default function InboxPage() {
   const [q, setQ] = useState("");
 
   const [msg, setMsg] = useState("");
+  const [emailSubject, setEmailSubject] = useState("Hi {{customer_name}}");
   const [templateId, setTemplateId] = useState("");
+
+  const [channel, setChannel] = useState<"whatsapp" | "email">("whatsapp");
 
   const selectedName = useMemo(() => selected?.name || "Select a lead", [selected]);
 
@@ -91,13 +94,35 @@ export default function InboxPage() {
     }
   }
 
+  async function sendEmailNow() {
+    if (!selected) return;
+    const subject = emailSubject.trim();
+    const body = msg.trim();
+    if (!subject || !body) return;
+    try {
+      await apiFetch<{ provider_message_id: string; interaction_id: string }>(
+        `/customers/${selected.id}/email/send`,
+        {
+          method: "POST",
+          body: JSON.stringify({ subject, body }),
+        }
+      );
+      setMsg("");
+      toast.push("Email sent");
+      await loadThread(selected.id);
+      await loadList();
+    } catch (err: any) {
+      toast.push(err?.message || "Failed to send email", "error");
+    }
+  }
+
   async function sendTemplate() {
     if (!selected) return;
     if (!templateId) return;
     try {
       await apiFetch<{ id: string; status: string }>(`/inbox/customers/${selected.id}/send-template`, {
         method: "POST",
-        body: JSON.stringify({ template_id: templateId, channel: "whatsapp" }),
+        body: JSON.stringify({ template_id: templateId, channel }),
       });
       toast.push("Queued template");
       await loadThread(selected.id);
@@ -106,6 +131,10 @@ export default function InboxPage() {
       toast.push(err?.message || "Failed to send template", "error");
     }
   }
+
+  const channelTemplates = useMemo(() => {
+    return templates.filter((t) => (t.channel || "").toLowerCase() === channel);
+  }, [templates, channel]);
 
   return (
     <div className="stack">
@@ -161,14 +190,40 @@ export default function InboxPage() {
         <section className="stack">
           <div className="card">
             <div className="cardHeader" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div style={{ fontWeight: 900 }}>{selectedName}</div>
+              <div style={{ display: "grid" }}>
+                <div style={{ fontWeight: 900 }}>{selectedName}</div>
+                {selected && (
+                  <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                    {selected.email || "—"} · {selected.phone || "—"}
+                  </div>
+                )}
+              </div>
               {selected ? <Link className="btn" href={`/contacts/${selected.id}`}>Open contact</Link> : <span />}
             </div>
             <div className="cardBody" style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div className="muted" style={{ fontSize: 12, fontWeight: 800 }}>Channel</div>
+                <button className={"btn " + (channel === "whatsapp" ? "btnPrimary" : "")} onClick={() => setChannel("whatsapp")}>WhatsApp</button>
+                <button className={"btn " + (channel === "email" ? "btnPrimary" : "")} onClick={() => setChannel("email")}>Email</button>
+              </div>
+
+              {channel === "email" && (
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div className="muted" style={{ fontSize: 12 }}>Subject</div>
+                  <input value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)} placeholder="Subject…" />
+                </div>
+              )}
+
               <div style={{ display: "grid", gap: 6 }}>
-                <div className="muted" style={{ fontSize: 12 }}>Quick message (WhatsApp)</div>
-                <textarea rows={3} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="Type a message…" />
-                <button className="btn btnPrimary" onClick={sendText} disabled={!selected || !msg.trim()}>Send</button>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  {channel === "whatsapp" ? "Quick message" : "Email body"}
+                </div>
+                <textarea rows={4} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder={channel === "whatsapp" ? "Type a message…" : "Write your email…"} />
+                {channel === "whatsapp" ? (
+                  <button className="btn btnPrimary" onClick={sendText} disabled={!selected || !msg.trim()}>Send</button>
+                ) : (
+                  <button className="btn btnPrimary" onClick={sendEmailNow} disabled={!selected || !msg.trim() || !emailSubject.trim()}>Send email</button>
+                )}
               </div>
 
               <div style={{ display: "grid", gap: 6 }}>
@@ -176,11 +231,14 @@ export default function InboxPage() {
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                   <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} style={{ flex: 1 }}>
                     <option value="">Select template…</option>
-                    {templates.map((t) => (
-                      <option key={t.id} value={t.id}>{t.name} ({t.channel})</option>
+                    {channelTemplates.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
                     ))}
                   </select>
                   <button className="btn" onClick={sendTemplate} disabled={!selected || !templateId}>Queue</button>
+                </div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Tip: templates support merge fields like <b>{"{{customer_name}}"}</b>
                 </div>
               </div>
             </div>

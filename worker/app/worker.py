@@ -5,6 +5,10 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+import smtplib
+import uuid
+from email.message import EmailMessage
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
@@ -14,6 +18,16 @@ from app.twilio_whatsapp import TwilioConfigError, send_whatsapp_template, send_
 POLL_INTERVAL_SECONDS = int(os.getenv("WORKER_POLL_INTERVAL_SECONDS", "5"))
 MAX_RETRIES = int(os.getenv("WORKER_MAX_RETRIES", "3"))
 DEFAULT_COUNTRY_CODE = os.getenv("DEFAULT_COUNTRY_CODE", "+44")
+
+# Email config (shared with API service)
+EMAIL_PROVIDER = (os.getenv("EMAIL_PROVIDER", "fake") or "fake").lower()
+SMTP_HOST = os.getenv("SMTP_HOST", "")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USERNAME = os.getenv("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_FROM_EMAIL = os.getenv("SMTP_FROM_EMAIL", "")
+SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "")
+SMTP_USE_STARTTLS = (os.getenv("SMTP_USE_STARTTLS", "true").lower() == "true")
 
 
 def _now() -> datetime:
@@ -55,6 +69,56 @@ def _render_text(text_tpl: str, context: Mapping[str, Any]) -> str:
     for k, v in context.items():
         out = out.replace("{{" + str(k) + "}}", "" if v is None else str(v))
     return out
+
+
+def _strip_html_fallback(html: str) -> str:
+    import re
+
+    text = re.sub(r"<\s*br\s*/?>", "\n", html, flags=re.IGNORECASE)
+    text = re.sub(r"</p\s*>", "\n\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _send_email(*, to_email: str, subject: str, body_html: str) -> str:
+    """Send email via SMTP or fake provider (dev).
+
+    Returns a provider_message_id string.
+    """
+    if EMAIL_PROVIDER == "fake":
+        return f"fake-{uuid.uuid4()}"
+    if EMAIL_PROVIDER != "smtp":
+        raise RuntimeError(f"Unsupported EMAIL_PROVIDER: {EMAIL_PROVIDER}")
+
+    if not SMTP_HOST:
+        raise RuntimeError("SMTP_HOST is not set")
+    if not SMTP_FROM_EMAIL:
+        raise RuntimeError("SMTP_FROM_EMAIL is not set")
+    if not SMTP_USERNAME:
+        raise RuntimeError("SMTP_USERNAME is not set")
+    if not SMTP_PASSWORD:
+        raise RuntimeError("SMTP_PASSWORD is not set")
+
+    msg = EmailMessage()
+    if SMTP_FROM_NAME:
+        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_FROM_EMAIL}>"
+    else:
+        msg["From"] = SMTP_FROM_EMAIL
+    msg["To"] = to_email
+    msg["Subject"] = subject
+    msg.set_content(_strip_html_fallback(body_html))
+    msg.add_alternative(body_html, subtype="html")
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+        server.ehlo()
+        if SMTP_USE_STARTTLS:
+            server.starttls()
+            server.ehlo()
+        server.login(SMTP_USERNAME, SMTP_PASSWORD)
+        server.send_message(msg)
+
+    return f"smtp-{uuid.uuid4()}"
 
 
 def process_once(engine: Engine) -> int:
@@ -101,15 +165,12 @@ def process_once(engine: Engine) -> int:
             continue  # someone else took it
 
         try:
-            if row["channel"] != "whatsapp":
-                raise RuntimeError(f"Unsupported channel for Phase 4A: {row['channel']}")
-
-            # fetch customer phone
+            # fetch customer contact fields
             with engine.begin() as conn:
                 customer = conn.execute(
                     text(
                         """
-                        SELECT phone, can_contact
+                        SELECT name, email, phone, company, can_contact
                         FROM customers
                         WHERE id = :cid
                         """
@@ -121,20 +182,73 @@ def process_once(engine: Engine) -> int:
                 raise RuntimeError("Customer not found")
             if customer["can_contact"] is False:
                 raise RuntimeError("Customer consent is disabled (can_contact=false)")
-            to = _normalise_whatsapp_to(customer["phone"])
-            if not to:
-                raise RuntimeError("Customer has no phone number to send WhatsApp to")
+            channel = (row["channel"] or "").lower()
 
             provider_sid = None
             interaction_content = None
+            interaction_subject = None
 
-            if row["template_id"] is not None:
-                # Fetch template, then decide template send vs text fallback
+            # Shared template variables (always available)
+            base_ctx: dict[str, Any] = {
+                "customer_name": customer.get("name"),
+                "company": customer.get("company"),
+            }
+
+            if channel == "whatsapp":
+                to = _normalise_whatsapp_to(customer["phone"])
+                if not to:
+                    raise RuntimeError("Customer has no phone number to send WhatsApp to")
+
+                if row["template_id"] is not None:
+                    with engine.begin() as conn:
+                        tpl = conn.execute(
+                            text(
+                                """
+                                SELECT name, body, provider_template_id
+                                FROM templates
+                                WHERE id = :tid
+                                """
+                            ),
+                            {"tid": row["template_id"]},
+                        ).mappings().first()
+                    if not tpl:
+                        raise RuntimeError("Template not found")
+
+                    variables = row["variables"] or {}
+                    if tpl["provider_template_id"]:
+                        res = send_whatsapp_template(
+                            to=to,
+                            content_sid=tpl["provider_template_id"],
+                            variables=variables,
+                        )
+                        provider_sid = res.sid
+                        interaction_content = f"[template:{tpl['name']}] {variables}"
+                    else:
+                        body = _render_text(tpl["body"], {**base_ctx, **variables})
+                        res = send_whatsapp_text(to=to, body=body)
+                        provider_sid = res.sid
+                        interaction_content = body
+                else:
+                    if not row["body"]:
+                        raise RuntimeError("No template_id or body provided")
+                    body = str(row["body"])
+                    res = send_whatsapp_text(to=to, body=body)
+                    provider_sid = res.sid
+                    interaction_content = body
+
+            elif channel == "email":
+                to_email = (customer.get("email") or "").strip()
+                if not to_email:
+                    raise RuntimeError("Customer has no email address")
+
+                if row["template_id"] is None:
+                    raise RuntimeError("Email channel requires template_id")
+
                 with engine.begin() as conn:
                     tpl = conn.execute(
                         text(
                             """
-                            SELECT name, body, provider_template_id
+                            SELECT name, subject, body
                             FROM templates
                             WHERE id = :tid
                             """
@@ -145,27 +259,19 @@ def process_once(engine: Engine) -> int:
                     raise RuntimeError("Template not found")
 
                 variables = row["variables"] or {}
-                if tpl["provider_template_id"]:
-                    res = send_whatsapp_template(
-                        to=to,
-                        content_sid=tpl["provider_template_id"],
-                        variables=variables,
-                    )
-                    provider_sid = res.sid
-                    interaction_content = f"[template:{tpl['name']}] {variables}"
-                else:
-                    # Render body using variables as context (supports {{key}} placeholders)
-                    body = _render_text(tpl["body"], variables)
-                    res = send_whatsapp_text(to=to, body=body)
-                    provider_sid = res.sid
-                    interaction_content = body
+                subject = _render_text(str(tpl.get("subject") or ""), {**base_ctx, **variables}).strip()
+                body_html = _render_text(str(tpl.get("body") or ""), {**base_ctx, **variables}).strip()
+                if not subject:
+                    raise RuntimeError("Rendered subject is empty")
+                if not body_html:
+                    raise RuntimeError("Rendered body is empty")
+
+                provider_sid = _send_email(to_email=to_email, subject=subject, body_html=body_html)
+                interaction_subject = subject
+                interaction_content = body_html
+
             else:
-                if not row["body"]:
-                    raise RuntimeError("No template_id or body provided")
-                body = str(row["body"])
-                res = send_whatsapp_text(to=to, body=body)
-                provider_sid = res.sid
-                interaction_content = body
+                raise RuntimeError(f"Unsupported channel: {channel}")
 
             # record interaction + mark sent
             with engine.begin() as conn:
@@ -175,7 +281,7 @@ def process_once(engine: Engine) -> int:
                         INSERT INTO interactions
                             (id, customer_id, owner_user_id, channel, direction, occurred_at, content, subject, provider_message_id, created_at, updated_at)
                         VALUES
-                            (:interaction_id, :customer_id, :owner_user_id, 'whatsapp', 'outbound', :occurred_at, :content, NULL, :provider_message_id, now(), now())
+                            (:interaction_id, :customer_id, :owner_user_id, :channel, 'outbound', :occurred_at, :content, :subject, :provider_message_id, now(), now())
                         """
                     ),
                     {
@@ -183,8 +289,10 @@ def process_once(engine: Engine) -> int:
                         "owner_user_id": row["owner_user_id"],
                         "occurred_at": _now(),
                         "content": interaction_content,
+                        "subject": interaction_subject,
                         "provider_message_id": provider_sid,
                         "interaction_id": str(__import__("uuid").uuid4()),
+                        "channel": channel,
                     },
                 )
 

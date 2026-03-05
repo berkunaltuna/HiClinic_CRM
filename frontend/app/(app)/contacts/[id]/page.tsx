@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { Topbar } from "@/components/Topbar";
 import { apiFetch } from "@/lib/api";
-import type { CustomerOut, DealOut, ThreadItem } from "@/lib/types";
+import type { CustomerOut, DealOut, ThreadItem, TemplateOut } from "@/lib/types";
 import { fmtDateTime } from "@/lib/dates";
 import { PIPELINE_STAGES, SERVICE_TAGS, stageLabel } from "@/lib/constants";
 import { useToast } from "@/components/Toast";
@@ -17,8 +17,13 @@ export default function ContactDetailPage() {
   const [c, setC] = useState<CustomerOut | null>(null);
   const [deals, setDeals] = useState<DealOut[]>([]);
   const [thread, setThread] = useState<ThreadItem[]>([]);
+  const [templates, setTemplates] = useState<TemplateOut[]>([]);
   const [busy, setBusy] = useState(true);
   const [note, setNote] = useState("");
+
+  const [emailSubject, setEmailSubject] = useState("Hi {{customer_name}}");
+  const [emailBody, setEmailBody] = useState("");
+  const [emailTemplateId, setEmailTemplateId] = useState("");
 
   const service = useMemo(() => {
     if (!c) return "";
@@ -28,14 +33,16 @@ export default function ContactDetailPage() {
   async function load() {
     setBusy(true);
     try {
-      const [cc, dd, tt] = await Promise.all([
+      const [cc, dd, tt, tpl] = await Promise.all([
         apiFetch<CustomerOut>(`/customers/${id}`),
         apiFetch<DealOut[]>(`/customers/${id}/deals`),
         apiFetch<ThreadItem[]>(`/inbox/customers/${id}/thread`),
+        apiFetch<TemplateOut[]>(`/templates`).catch(() => [] as TemplateOut[]),
       ]);
       setC(cc);
       setDeals(dd);
       setThread(tt);
+      setTemplates(tpl);
     } catch (err: any) {
       toast.push(err?.message || "Failed to load contact", "error");
     } finally {
@@ -97,6 +104,40 @@ export default function ContactDetailPage() {
       toast.push(err?.message || "Failed to add note", "error");
     }
   }
+
+  async function sendEmailNow() {
+    if (!c) return;
+    const subject = emailSubject.trim();
+    const body = emailBody.trim();
+    if (!subject || !body) return;
+    try {
+      await apiFetch<{ provider_message_id: string; interaction_id: string }>(`/customers/${id}/email/send`, {
+        method: "POST",
+        body: JSON.stringify({ subject, body }),
+      });
+      setEmailBody("");
+      toast.push("Email sent");
+      await load();
+    } catch (err: any) {
+      toast.push(err?.message || "Failed to send email", "error");
+    }
+  }
+
+  async function queueEmailTemplate() {
+    if (!emailTemplateId) return;
+    try {
+      await apiFetch<{ id: string; status: string }>(`/inbox/customers/${id}/send-template`, {
+        method: "POST",
+        body: JSON.stringify({ template_id: emailTemplateId, channel: "email" }),
+      });
+      toast.push("Queued email template");
+      await load();
+    } catch (err: any) {
+      toast.push(err?.message || "Failed to queue template", "error");
+    }
+  }
+
+  const emailTemplates = useMemo(() => templates.filter((t) => (t.channel || "").toLowerCase() === "email"), [templates]);
 
   return (
     <div className="stack">
@@ -202,6 +243,36 @@ export default function ContactDetailPage() {
               <div className="cardBody" style={{ display: "grid", gap: 8 }}>
                 <textarea rows={4} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add a note (saved as outbound interaction)…" />
                 <button className="btn btnPrimary" onClick={addNote} disabled={!note.trim()}>Add note</button>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="cardHeader" style={{ fontWeight: 900 }}>Send email</div>
+              <div className="cardBody" style={{ display: "grid", gap: 10 }}>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div className="muted" style={{ fontSize: 12 }}>From template</div>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <select value={emailTemplateId} onChange={(e) => setEmailTemplateId(e.target.value)} style={{ flex: 1 }}>
+                      <option value="">Select email template…</option>
+                      {emailTemplates.map((t) => (
+                        <option key={t.id} value={t.id}>{t.name}</option>
+                      ))}
+                    </select>
+                    <button className="btn" onClick={queueEmailTemplate} disabled={!emailTemplateId}>Queue</button>
+                  </div>
+                </div>
+
+                <div style={{ borderTop: "1px solid var(--border)", margin: "6px 0" }} />
+
+                <div style={{ display: "grid", gap: 6 }}>
+                  <div className="muted" style={{ fontSize: 12 }}>Manual email</div>
+                  <input value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)} placeholder="Subject…" />
+                  <textarea rows={6} value={emailBody} onChange={(e) => setEmailBody(e.target.value)} placeholder="Write your email…" />
+                  <button className="btn btnPrimary" onClick={sendEmailNow} disabled={!emailSubject.trim() || !emailBody.trim()}>Send email</button>
+                  <div className="muted" style={{ fontSize: 12 }}>
+                    Tip: merge fields supported, e.g. <b>{"{{customer_name}}"}</b>
+                  </div>
+                </div>
               </div>
             </div>
 

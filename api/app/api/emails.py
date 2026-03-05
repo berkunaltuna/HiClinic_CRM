@@ -87,25 +87,43 @@ def send_email(
     if not customer.email:
         raise HTTPException(status_code=400, detail="Customer email is missing")
 
-    tpl = _select_template(
-        db, template_id=payload.template_id, template_name=payload.template_name, customer=customer
-    )
-
-    # Basic categorisation enforcement (same boolean for now; future can be granular)
-    if tpl.category == "marketing" and not customer.can_contact:
-        raise HTTPException(status_code=403, detail="Customer cannot be contacted for marketing")
-
     context = {
         "customer_name": customer.name,
         "company": customer.company,
     }
-    rendered = render_template(subject=tpl.subject, body=tpl.body, context=context)
-    if not rendered.subject:
-        raise HTTPException(status_code=400, detail="Rendered subject is empty")
+
+    # Mode A: template-based
+    rendered_subject: str
+    rendered_body: str
+    if payload.template_id is not None or payload.template_name is not None:
+        tpl = _select_template(
+            db, template_id=payload.template_id, template_name=payload.template_name, customer=customer
+        )
+
+        # Basic categorisation enforcement (same boolean for now; future can be granular)
+        if tpl.category == "marketing" and not customer.can_contact:
+            raise HTTPException(status_code=403, detail="Customer cannot be contacted for marketing")
+
+        rendered = render_template(subject=tpl.subject, body=tpl.body, context=context)
+        if not rendered.subject:
+            raise HTTPException(status_code=400, detail="Rendered subject is empty")
+        rendered_subject, rendered_body = rendered.subject, rendered.body
+
+    # Mode B: direct send (subject + body)
+    else:
+        subject = (payload.subject or "").strip()
+        body = (payload.body or "").strip()
+        if not subject or not body:
+            raise HTTPException(status_code=400, detail="subject and body are required")
+
+        rendered = render_template(subject=subject, body=body, context=context)
+        if not rendered.subject:
+            raise HTTPException(status_code=400, detail="Rendered subject is empty")
+        rendered_subject, rendered_body = rendered.subject, rendered.body
 
     provider = _get_email_provider()
     provider_message_id = provider.send_email(
-        to_email=customer.email, subject=rendered.subject, body=rendered.body
+        to_email=customer.email, subject=rendered_subject, body=rendered_body
     )
 
     interaction = Interaction(
@@ -114,8 +132,8 @@ def send_email(
         channel="email",
         direction="outbound",
         occurred_at=datetime.now(tz=timezone.utc),
-        content=rendered.body,
-        subject=rendered.subject,
+        content=rendered_body,
+        subject=rendered_subject,
         provider_message_id=provider_message_id,
     )
     db.add(interaction)
