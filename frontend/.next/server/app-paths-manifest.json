@@ -1,0 +1,9 @@
+{
+  "/(app)/dashboard/page": "app/(app)/dashboard/page.js",
+  "/(app)/contacts/[id]/page": "app/(app)/contacts/[id]/page.js",
+  "/(app)/inbox/page": "app/(app)/inbox/page.js",
+  "/(app)/tasks/page": "app/(app)/tasks/page.js",
+  "/(app)/pipeline/page": "app/(app)/pipeline/page.js",
+  "/(auth)/login/page": "app/(auth)/login/page.js",
+  "/(app)/contacts/page": "app/(app)/contacts/page.js"
+}

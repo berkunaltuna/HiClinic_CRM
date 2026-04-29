@@ -1,0 +1,35 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+from uuid import UUID
+
+from pydantic import BaseModel
+
+
+class InteractionCreate(BaseModel):
+    channel: str
+    direction: str
+    content: Optional[str] = None
+    occurred_at: datetime | None = None
+
+    # Phase 3 additions (optional; usually set by system)
+    subject: Optional[str] = None
+    provider_message_id: Optional[str] = None
+
+
+class InteractionOut(BaseModel):
+    id: UUID
+    customer_id: UUID
+    owner_user_id: UUID
+    channel: str
+    direction: str
+    occurred_at: datetime
+    content: Optional[str] = None
+
+    # Phase 3 additions
+    subject: Optional[str] = None
+    provider_message_id: Optional[str] = None
+
+    class Config:
+        from_attributes = True

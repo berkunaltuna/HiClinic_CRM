@@ -1,0 +1,27 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# System deps for psycopg (binary wheel usually works; keep build deps minimal)
+RUN pip install --no-cache-dir --upgrade pip
+
+COPY requirements.txt /app/requirements.txt
+COPY requirements-dev.txt /app/requirements-dev.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app /app/app
+COPY alembic.ini /app/alembic.ini
+COPY alembic /app/alembic
+COPY entrypoint.sh /app/entrypoint.sh
+
+RUN apt-get update \
+    && apt-get install -y postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8000
+
+RUN chmod +x /app/entrypoint.sh
+
+CMD ["/app/entrypoint.sh"]

@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from app.auth.security import create_access_token, hash_password, verify_password
+from app.core.config import settings
+from app.db.session import get_db
+from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, MeOut
+from app.auth.deps import get_current_user
+from app.db.models import User, UserRole
+
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+@router.get("/me", response_model=MeOut)
+def me(user: User = Depends(get_current_user)) -> MeOut:
+    return MeOut(id=str(user.id), email=user.email, role=str(getattr(user, "role", "user")))
+
+
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> TokenResponse:
+    email_norm = payload.email.strip().lower()
+    existing = db.query(User).filter(User.email == email_norm).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    role = UserRole.admin if email_norm in settings.admin_emails else UserRole.user
+    user = User(email=email_norm, password_hash=hash_password(payload.password), role=role)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    token = create_access_token(str(user.id))
+    return TokenResponse(access_token=token)
+
+
+@router.post("/login", response_model=TokenResponse)
+def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+    email_norm = payload.email.strip().lower()
+    user = db.query(User).filter(User.email == email_norm).first()
+    if user is None or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    # If an existing user is now listed as an admin in env/config, upgrade role.
+    if email_norm in settings.admin_emails and getattr(user, "role", None) != UserRole.admin:
+        user.role = UserRole.admin
+        db.add(user)
+        db.commit()
+
+    token = create_access_token(str(user.id))
+    return TokenResponse(access_token=token)
