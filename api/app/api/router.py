@@ -14,6 +14,7 @@ from app.api import (
     webhooks_twilio,
     webhooks_meta,
     webhooks_make,
+    webhooks_whatsapp,
     workflows,
     tags,
     inbox,
@@ -36,6 +37,7 @@ api_router.include_router(outbound_messages.router)
 api_router.include_router(webhooks_twilio.router)
 api_router.include_router(webhooks_meta.router)
 api_router.include_router(webhooks_make.router)
+api_router.include_router(webhooks_whatsapp.router)
 api_router.include_router(workflows.router)
 api_router.include_router(tags.router)
 

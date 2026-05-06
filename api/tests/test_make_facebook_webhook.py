@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.core.config import settings
 
 
 def test_make_facebook_lead_creates_customer_deal_and_dedupes(client, db, token):
@@ -22,7 +23,12 @@ def test_make_facebook_lead_creates_customer_deal_and_dedupes(client, db, token)
         "company": "Health Journey",
     }
 
-    r = client.post("/webhooks/make/facebook-lead", json=payload)
+    # First request (create)
+    r = client.post(
+        "/webhooks/make/facebook-lead",
+        json=payload,
+        headers={"X-Make-Secret": settings.make_webhook_secret},
+    )
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "ok"
     assert r.json()["leadgen_id"] == "make-lead-123"
@@ -40,21 +46,36 @@ def test_make_facebook_lead_creates_customer_deal_and_dedupes(client, db, token)
     assert deal is not None
     assert deal.status == "open"
 
-    event = db.query(FacebookLeadEvent).filter(FacebookLeadEvent.leadgen_id == "make-lead-123").first()
+    event = db.query(FacebookLeadEvent).filter(
+        FacebookLeadEvent.leadgen_id == "make-lead-123"
+    ).first()
     assert event is not None
     assert event.customer_id == customer.id
     assert event.deal_id == deal.id
 
-    interaction = db.query(Interaction).filter(Interaction.provider_message_id == "make-lead-123").first()
+    interaction = db.query(Interaction).filter(
+        Interaction.provider_message_id == "make-lead-123"
+    ).first()
     assert interaction is not None
     assert interaction.subject == "Facebook Lead Form submission"
 
-    r = client.post("/webhooks/make/facebook-lead", json=payload)
+    # Second request (dedupe)
+    r = client.post(
+        "/webhooks/make/facebook-lead",
+        json=payload,
+        headers={"X-Make-Secret": settings.make_webhook_secret},
+    )
     assert r.status_code == 200, r.text
     assert r.json()["deduped"] is True
+
     assert db.query(Customer).filter(Customer.email == "jane.make@example.com").count() == 1
     assert db.query(Deal).filter(Deal.customer_id == customer.id).count() == 1
-    assert db.query(FacebookLeadEvent).filter(FacebookLeadEvent.leadgen_id == "make-lead-123").count() == 1
+    assert (
+        db.query(FacebookLeadEvent)
+        .filter(FacebookLeadEvent.leadgen_id == "make-lead-123")
+        .count()
+        == 1
+    )
 
 
 def test_make_webhook_secret_is_checked(client, db, token):
@@ -64,16 +85,21 @@ def test_make_webhook_secret_is_checked(client, db, token):
 
     previous = settings.make_webhook_secret
     settings.make_webhook_secret = "secret-123"
+
     try:
         payload = {"lead_id": "secret-lead"}
+
+        # Missing secret → should fail
         r = client.post("/webhooks/make/facebook-lead", json=payload)
         assert r.status_code == 403, r.text
 
+        # Correct secret → should pass
         r = client.post(
             "/webhooks/make/facebook-lead",
             json=payload,
             headers={"X-Make-Secret": "secret-123"},
         )
         assert r.status_code == 200, r.text
+
     finally:
         settings.make_webhook_secret = previous

@@ -31,7 +31,7 @@ def test_inbound_whatsapp_auto_tags_workflow_and_cancellation(client, auth_heade
 
     # First inbound message creates customer + interaction and triggers workflow
     form = {
-        "From": "whatsapp:+447700900123",
+        "From": "whatsapp:+447700900456",
         "Body": "Hi, I want implant prices",
         "MessageSid": "SM111",
         "ProfileName": "Test Lead",
@@ -46,7 +46,7 @@ def test_inbound_whatsapp_auto_tags_workflow_and_cancellation(client, auth_heade
     # Customer should exist with tags + stage
     from app.db.models import Customer, OutboundMessage
 
-    customer = db.query(Customer).filter(Customer.phone == "+447700900123").first()
+    customer = db.query(Customer).filter(Customer.phone == "+447700900456").first()
     assert customer is not None
     assert customer.stage == "contacted"
     tags = set(customer.tag_names)
@@ -70,7 +70,7 @@ def test_inbound_whatsapp_auto_tags_workflow_and_cancellation(client, auth_heade
 
     # Second inbound reply should cancel the queued follow-up
     form2 = {
-        "From": "whatsapp:+447700900123",
+        "From": "whatsapp:+447700900456",
         "Body": "Thanks!",
         "MessageSid": "SM112",
     }

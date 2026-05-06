@@ -76,6 +76,15 @@ class Settings:
 
     make_webhook_secret: str | None = os.getenv("MAKE_WEBHOOK_SECRET")
 
+    # WhatsApp Cloud API webhook ingestion
+    whatsapp_verify_token: str = os.getenv("WHATSAPP_VERIFY_TOKEN", "berk-whatsapp-verify")
+    whatsapp_app_secret: str | None = os.getenv("WHATSAPP_APP_SECRET")
+    whatsapp_validate_signature: bool = _get_bool("WHATSAPP_VALIDATE_SIGNATURE", False)
+    whatsapp_default_owner_user_id: str | None = os.getenv("WHATSAPP_DEFAULT_OWNER_USER_ID")
+    whatsapp_access_token: str | None = os.getenv("WHATSAPP_ACCESS_TOKEN")
+    whatsapp_phone_number_id: str | None = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    whatsapp_api_version: str = os.getenv("WHATSAPP_API_VERSION", "v21.0")
+
     # Phase 4: WhatsApp (Twilio) + automation
     default_country_code: str = os.getenv("DEFAULT_COUNTRY_CODE", "+44")
 
