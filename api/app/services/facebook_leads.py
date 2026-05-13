@@ -17,6 +17,14 @@ from app.services.tags import add_tag_to_customer
 
 GRAPH_API_BASE = "https://graph.facebook.com"
 
+TREATMENT_TAG_MAP = {
+    "Hair Transplant": "Hair Transplant",
+    "Facial Aesthetics (Face Lift ect))": "Facial Aesthetics",
+    "Eyelid surgery (blepharoplasty)": "Eyelid Surgery",
+    "Body Contouring (Tummy Tuck, BBL, Lipo)": "Body Contouring",
+    "Breast Aesthetic Surgery": "Breast Aesthetic Surgery",
+}
+
 
 def _get_default_owner(db: Session) -> User:
     configured_id = (settings.facebook_default_owner_user_id or "").strip()
@@ -217,6 +225,15 @@ def _ingest_graph_style_lead(
 
     field_data = lead.get("field_data") or []
 
+    selected_treatments: list[str] = []
+
+    for field in field_data:
+        values = field.get("values") or []
+        for value in values:
+            tag_name = TREATMENT_TAG_MAP.get(value)
+            if tag_name:
+                selected_treatments.append(tag_name)
+
     full_name = _extract_field(field_data, "full_name", "name")
     email = _extract_field(field_data, "email")
     phone = _normalise_phone(_extract_field(field_data, "phone_number", "phone"))
@@ -236,6 +253,8 @@ def _ingest_graph_style_lead(
         )
         db.add(customer)
         db.flush()
+        for tag_name in selected_treatments:
+            add_tag_to_customer(db, customer=customer, tag_name=tag_name, owner=owner)
     else:
         if full_name and (not customer.name or customer.name.startswith("Facebook Lead")):
             customer.name = full_name
@@ -299,7 +318,7 @@ def _ingest_graph_style_lead(
         add_tag_to_customer(db, customer=customer, tag_name="new_lead")
 
     if customer.stage == "new":
-        customer.stage = "contacted"
+        customer.stage = "new"
 
     db.commit()
 
