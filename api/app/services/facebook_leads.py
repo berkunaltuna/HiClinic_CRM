@@ -107,6 +107,32 @@ def _extract_field(field_data: list[dict[str, Any]], *names: str) -> str | None:
     return None
 
 
+def _field_name_key(name: str) -> str:
+    return "".join(ch for ch in str(name or "").lower() if ch.isalnum())
+
+
+def _extract_field_fuzzy(field_data: list[dict[str, Any]], *names: str) -> str | None:
+    wanted = {_field_name_key(n) for n in names}
+    for item in field_data or []:
+        key = _field_name_key(str(item.get("name") or ""))
+        if key not in wanted:
+            continue
+        values = item.get("values") or []
+        if not values:
+            return None
+        # Meta can return checkbox answers as multiple values. Keep them readable.
+        cleaned: list[str] = []
+        for value in values:
+            if isinstance(value, dict):
+                cleaned.append(json.dumps(value, ensure_ascii=False))
+            else:
+                text = str(value).strip()
+                if text:
+                    cleaned.append(text)
+        return ", ".join(cleaned) if cleaned else None
+    return None
+
+
 def _normalise_phone(raw: str | None) -> str | None:
     if not raw:
         return None
@@ -230,14 +256,38 @@ def _ingest_graph_style_lead(
     for field in field_data:
         values = field.get("values") or []
         for value in values:
-            tag_name = TREATMENT_TAG_MAP.get(value)
+            text = str(value).strip()
+            tag_name = TREATMENT_TAG_MAP.get(text)
             if tag_name:
                 selected_treatments.append(tag_name)
 
-    full_name = _extract_field(field_data, "full_name", "name")
-    email = _extract_field(field_data, "email")
-    phone = _normalise_phone(_extract_field(field_data, "phone_number", "phone"))
-    company = _extract_field(field_data, "company_name", "company")
+    full_name = _extract_field_fuzzy(field_data, "full_name", "full name", "name")
+    email = _extract_field_fuzzy(field_data, "email", "email address")
+    phone = _normalise_phone(_extract_field_fuzzy(field_data, "phone_number", "phone number", "phone", "mobile"))
+    company = _extract_field_fuzzy(field_data, "company_name", "company name", "company")
+
+    treatment_interest = _extract_field_fuzzy(
+        field_data,
+        "which treatment are you interested in",
+        "treatment_interest",
+        "treatment interest",
+        "treatments",
+        "treatment",
+    )
+    preferred_consultation_day = _extract_field_fuzzy(
+        field_data,
+        "preferred consultation day",
+        "consultation day",
+        "preferred_day",
+        "preferred day",
+    )
+    seminar_preference = _extract_field_fuzzy(
+        field_data,
+        "would you like to attend the seminar",
+        "seminar",
+        "seminar_preference",
+        "seminar preference",
+    )
 
     customer = _find_existing_customer(db, owner.id, email=email, phone=phone)
     is_new_customer = customer is None
@@ -272,11 +322,25 @@ def _ingest_graph_style_lead(
         .first()
     )
     if existing_open_deal is None:
-        deal = Deal(customer_id=customer.id, owner_user_id=owner.id, amount=0, status=DealStatus.open)
+        deal = Deal(
+            customer_id=customer.id,
+            owner_user_id=owner.id,
+            amount=0,
+            status=DealStatus.open,
+            treatment_interest=treatment_interest,
+            preferred_consultation_day=preferred_consultation_day,
+            seminar_preference=seminar_preference,
+        )
         db.add(deal)
         db.flush()
     else:
         deal = existing_open_deal
+        if treatment_interest and not deal.treatment_interest:
+            deal.treatment_interest = treatment_interest
+        if preferred_consultation_day and not deal.preferred_consultation_day:
+            deal.preferred_consultation_day = preferred_consultation_day
+        if seminar_preference and not deal.seminar_preference:
+            deal.seminar_preference = seminar_preference
 
     event = FacebookLeadEvent(
         owner_user_id=owner.id,
@@ -300,6 +364,9 @@ def _ingest_graph_style_lead(
         "form_id": lead.get("form_id"),
         "page_id": lead.get("page_id"),
         "platform": lead.get("platform"),
+        "treatment_interest": treatment_interest,
+        "preferred_consultation_day": preferred_consultation_day,
+        "seminar_preference": seminar_preference,
     }
     interaction = Interaction(
         customer_id=customer.id,
@@ -316,6 +383,12 @@ def _ingest_graph_style_lead(
     add_tag_to_customer(db, customer=customer, tag_name="facebook_lead")
     if is_new_customer:
         add_tag_to_customer(db, customer=customer, tag_name="new_lead")
+    if treatment_interest:
+        add_tag_to_customer(db, customer=customer, tag_name=f"interest:{treatment_interest}")
+    if preferred_consultation_day:
+        add_tag_to_customer(db, customer=customer, tag_name=f"day:{preferred_consultation_day}")
+    if seminar_preference:
+        add_tag_to_customer(db, customer=customer, tag_name=f"seminar:{seminar_preference}")
 
     if customer.stage == "new":
         customer.stage = "new"

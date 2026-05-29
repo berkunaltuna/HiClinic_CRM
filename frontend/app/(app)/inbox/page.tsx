@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import type { InboxCustomerOut, ThreadItem, TemplateOut } from "@/lib/types";
 import { fmtDateTime } from "@/lib/dates";
 import { useToast } from "@/components/Toast";
+import { WhatsAppQuickAction } from "@/components/WhatsAppQuickAction";
 
 export default function InboxPage() {
   const toast = useToast();
@@ -259,6 +260,11 @@ export default function InboxPage() {
                       <span className="badge">{c.bucket}</span>
                     </div>
                     <div className="muted" style={{ fontSize: 12 }}>{c.company || c.email || c.phone || "—"}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                      {c.latest_deal?.treatment_interest && <span className="chip">{c.latest_deal.treatment_interest}</span>}
+                      {c.latest_deal?.preferred_consultation_day && <span className="chip">{c.latest_deal.preferred_consultation_day}</span>}
+                      {c.latest_deal?.seminar_preference && <span className="chip">{c.latest_deal.seminar_preference}</span>}
+                    </div>
                     <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Last: {fmtDateTime(c.last_activity_at)}</div>
                   </div>
                 );
@@ -275,9 +281,22 @@ export default function InboxPage() {
                 <div style={{ fontWeight: 900 }}>{selected?.name || "Select a lead"}</div>
                 {selected && <div className="muted" style={{ fontSize: 12 }}>{selected.email || "—"} · {selected.phone || "—"}</div>}
               </div>
-              {selected ? <Link className="btn" href={`/contacts/${selected.id}`}>Open contact</Link> : <span />}
+              {selected ? (
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <WhatsAppQuickAction customer={selected} compact />
+                  <Link className="btn" href={`/contacts/${selected.id}`}>Open contact</Link>
+                </div>
+              ) : <span />}
             </div>
             <div className="cardBody" style={{ maxHeight: "58vh", overflow: "auto", display: "grid", gap: 10 }}>
+              {selected && (
+                <div style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 14 }}>
+                  <div style={{ fontWeight: 900, marginBottom: 6 }}>Lead form details</div>
+                  <div className="muted" style={{ fontSize: 12 }}>Treatment: <b>{selected.latest_deal?.treatment_interest || "—"}</b></div>
+                  <div className="muted" style={{ fontSize: 12 }}>Preferred day: <b>{selected.latest_deal?.preferred_consultation_day || "—"}</b></div>
+                  <div className="muted" style={{ fontSize: 12 }}>Seminar: <b>{selected.latest_deal?.seminar_preference || "—"}</b></div>
+                </div>
+              )}
               {selected ? thread.slice().reverse().map((t) => (
                 <div key={t.id} style={{ padding: 12, border: "1px solid var(--border)", borderRadius: 14, background: t.direction === "outbound" ? "rgba(30, 103, 150, 0.05)" : "white" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>

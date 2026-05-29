@@ -8,6 +8,7 @@ import type { CustomerOut, DealOut, ThreadItem, TemplateOut } from "@/lib/types"
 import { fmtDateTime } from "@/lib/dates";
 import { PIPELINE_STAGES, SERVICE_TAGS, stageLabel } from "@/lib/constants";
 import { useToast } from "@/components/Toast";
+import { WhatsAppQuickAction } from "@/components/WhatsAppQuickAction";
 
 export default function ContactDetailPage() {
   const toast = useToast();
@@ -227,6 +228,26 @@ export default function ContactDetailPage() {
             </div>
 
             <div className="card">
+              <div className="cardHeader" style={{ fontWeight: 900 }}>Lead form details</div>
+              <div className="cardBody" style={{ display: "grid", gap: 10 }}>
+                <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <div className="muted" style={{ fontSize: 12 }}>Treatment interest</div>
+                    <div style={{ fontWeight: 700 }}>{c.latest_deal?.treatment_interest || "—"}</div>
+                  </div>
+                  <div>
+                    <div className="muted" style={{ fontSize: 12 }}>Preferred consultation day</div>
+                    <div style={{ fontWeight: 700 }}>{c.latest_deal?.preferred_consultation_day || "—"}</div>
+                  </div>
+                </div>
+                <div>
+                  <div className="muted" style={{ fontSize: 12 }}>Seminar preference</div>
+                  <div style={{ fontWeight: 700 }}>{c.latest_deal?.seminar_preference || "—"}</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
               <div className="cardHeader" style={{ fontWeight: 900 }}>Deals</div>
               <div className="cardBody">
                 <table className="table">
@@ -234,6 +255,8 @@ export default function ContactDetailPage() {
                     <tr>
                       <th>Amount</th>
                       <th>Status</th>
+                      <th>Treatment</th>
+                      <th>Preferred day</th>
                       <th>Updated</th>
                     </tr>
                   </thead>
@@ -242,12 +265,14 @@ export default function ContactDetailPage() {
                       <tr key={d.id}>
                         <td style={{ fontWeight: 800 }}>{d.amount}</td>
                         <td className="muted">{d.status}</td>
+                        <td className="muted">{d.treatment_interest || "—"}</td>
+                        <td className="muted">{d.preferred_consultation_day || "—"}</td>
                         <td className="muted">{fmtDateTime(d.updated_at)}</td>
                       </tr>
                     ))}
                     {!deals.length && (
                       <tr>
-                        <td colSpan={3} className="muted">No deals yet.</td>
+                        <td colSpan={5} className="muted">No deals yet.</td>
                       </tr>
                     )}
                   </tbody>
@@ -257,6 +282,8 @@ export default function ContactDetailPage() {
           </section>
 
           <section className="stack">
+            <WhatsAppQuickAction customer={c} templates={templates} />
+
             <div className="card">
               <div className="cardHeader" style={{ fontWeight: 900 }}>Add note</div>
               <div className="cardBody" style={{ display: "grid", gap: 8 }}>

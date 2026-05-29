@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import type { CustomerOut } from "@/lib/types";
 import { fmtDateTime } from "@/lib/dates";
 import { useToast } from "@/components/Toast";
+import { WhatsAppQuickAction } from "@/components/WhatsAppQuickAction";
 
 export default function ContactsPage() {
   const toast = useToast();
@@ -84,6 +85,7 @@ export default function ContactsPage() {
                   <th>Company</th>
                   <th>Stage</th>
                   <th>Follow-up</th>
+                  <th>Lead form</th>
                   <th></th>
                 </tr>
               </thead>
@@ -97,14 +99,25 @@ export default function ContactsPage() {
                     <td className="muted">{c.company || "—"}</td>
                     <td><span className="badge">{c.stage}</span></td>
                     <td className="muted">{fmtDateTime(c.next_follow_up_at)}</td>
+                    <td>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {c.latest_deal?.treatment_interest && <span className="chip">{c.latest_deal.treatment_interest}</span>}
+                        {c.latest_deal?.preferred_consultation_day && <span className="chip">{c.latest_deal.preferred_consultation_day}</span>}
+                        {c.latest_deal?.seminar_preference && <span className="chip">{c.latest_deal.seminar_preference}</span>}
+                        {!c.latest_deal?.treatment_interest && !c.latest_deal?.preferred_consultation_day && !c.latest_deal?.seminar_preference && <span className="muted">—</span>}
+                      </div>
+                    </td>
                     <td style={{ textAlign: "right" }}>
-                      <button className="btn" onClick={() => deleteContact(c.id, c.name)}>Delete</button>
+                      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                        <WhatsAppQuickAction customer={c} compact />
+                        <button className="btn" onClick={() => deleteContact(c.id, c.name)}>Delete</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
                 {!busy && !items.length && (
                   <tr>
-                    <td colSpan={5} className="muted">No contacts yet.</td>
+                    <td colSpan={6} className="muted">No contacts yet.</td>
                   </tr>
                 )}
               </tbody>

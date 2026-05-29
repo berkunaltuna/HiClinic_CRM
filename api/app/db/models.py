@@ -92,6 +92,13 @@ class Customer(Base):
         # Convenience for API schemas.
         return [ct.tag.name for ct in (self.tags or []) if ct.tag is not None]
 
+    @property
+    def latest_deal(self):
+        deals = list(self.deals or [])
+        if not deals:
+            return None
+        return sorted(deals, key=lambda d: d.created_at or d.id, reverse=True)[0]
+
 class DealStatus(str, Enum):
     open = "open"
     won = "won"
@@ -120,6 +127,13 @@ class Deal(Base):
     )
 
     amount = sa.Column(sa.Numeric(12, 2), nullable=False, server_default="0")
+
+    # Lead form answers mapped from Meta/Facebook Lead Ads. Kept on the deal
+    # because one customer can enquire about multiple treatments over time.
+    treatment_interest = sa.Column(sa.String(200))
+    preferred_consultation_day = sa.Column(sa.String(200))
+    seminar_preference = sa.Column(sa.String(300))
+
     status = sa.Column(
     sa.Enum(DealStatus, name="deal_status"),
     nullable=False,

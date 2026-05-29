@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.schemas.deal import DealOut
+
 
 class InboxCustomerOut(BaseModel):
     id: UUID
@@ -21,6 +23,7 @@ class InboxCustomerOut(BaseModel):
     last_activity_at: datetime | None = None
     last_activity_direction: str | None = None
     bucket: str
+    latest_deal: DealOut | None = None
 
 
 class ThreadItem(BaseModel):

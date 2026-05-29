@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+from app.schemas.deal import DealOut
+
 
 class CustomerCreate(BaseModel):
     name: str
@@ -49,6 +51,10 @@ class CustomerOut(BaseModel):
     # Phase 4B additions
     stage: str
     tag_names: list[str] = []
+
+    # Latest deal is included so the UI can show lead form answers without
+    # making an extra request on the contact list/inbox.
+    latest_deal: DealOut | None = None
 
     class Config:
         from_attributes = True

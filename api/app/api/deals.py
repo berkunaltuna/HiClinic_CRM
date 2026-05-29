@@ -45,6 +45,9 @@ def create_deal(
         owner_user_id=user.id,
         amount=payload.amount,
         status=payload.status,
+        treatment_interest=payload.treatment_interest,
+        preferred_consultation_day=payload.preferred_consultation_day,
+        seminar_preference=payload.seminar_preference,
     )
     db.add(deal)
     db.commit()

@@ -13,6 +13,9 @@ class DealCreate(BaseModel):
     title: Optional[str] = None  # accepted but ignored by DB (no title column)
     amount: float = Field(..., validation_alias="value")
     status: str = "open"
+    treatment_interest: Optional[str] = None
+    preferred_consultation_day: Optional[str] = None
+    seminar_preference: Optional[str] = None
 
 
 class DealUpdate(BaseModel):
@@ -20,6 +23,9 @@ class DealUpdate(BaseModel):
 
     amount: Optional[float] = Field(default=None, validation_alias="value")
     status: Optional[str] = None
+    treatment_interest: Optional[str] = None
+    preferred_consultation_day: Optional[str] = None
+    seminar_preference: Optional[str] = None
 
 
 class DealOut(BaseModel):
@@ -28,6 +34,9 @@ class DealOut(BaseModel):
     owner_user_id: UUID
     amount: float
     status: str
+    treatment_interest: Optional[str] = None
+    preferred_consultation_day: Optional[str] = None
+    seminar_preference: Optional[str] = None
 
     class Config:
         from_attributes = True

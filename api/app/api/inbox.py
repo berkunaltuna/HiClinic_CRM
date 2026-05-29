@@ -134,6 +134,7 @@ def list_inbox_customers(
                 last_activity_at=last_activity_at,
                 last_activity_direction=last_activity_direction,
                 bucket=b,
+                latest_deal=c.latest_deal,
             )
         )
 

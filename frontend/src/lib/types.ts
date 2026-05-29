@@ -5,6 +5,12 @@ export type AuthTokenOut = {
   token_type?: string;
 };
 
+export type DealLeadFields = {
+  treatment_interest: string | null;
+  preferred_consultation_day: string | null;
+  seminar_preference: string | null;
+};
+
 export type CustomerOut = {
   id: UUID;
   name: string;
@@ -16,6 +22,7 @@ export type CustomerOut = {
   language: string | null;
   stage: string;
   tag_names: string[];
+  latest_deal: DealOut | null;
 };
 
 export type InboxCustomerOut = {
@@ -32,6 +39,7 @@ export type InboxCustomerOut = {
   last_activity_at: string | null;
   last_activity_direction: string | null;
   bucket: "followup_due" | "open" | "waiting" | "closed" | string;
+  latest_deal: DealOut | null;
 };
 
 export type ThreadItem = {
@@ -51,6 +59,9 @@ export type DealOut = {
   customer_id: UUID;
   amount: string;
   status: string;
+  treatment_interest: string | null;
+  preferred_consultation_day: string | null;
+  seminar_preference: string | null;
   created_at: string;
   updated_at: string;
 };

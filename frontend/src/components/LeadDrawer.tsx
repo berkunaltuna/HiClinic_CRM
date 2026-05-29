@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
-import type { InboxCustomerOut, ThreadItem } from "@/lib/types";
+import type { InboxCustomerOut, ThreadItem, TemplateOut } from "@/lib/types";
 import { fmtDateTime } from "@/lib/dates";
 import { PIPELINE_STAGES, SERVICE_TAGS, stageLabel } from "@/lib/constants";
 import { useToast } from "@/components/Toast";
+import { WhatsAppQuickAction } from "@/components/WhatsAppQuickAction";
 
 export function LeadDrawer({
   lead,
@@ -19,6 +20,7 @@ export function LeadDrawer({
 }) {
   const toast = useToast();
   const [thread, setThread] = useState<ThreadItem[]>([]);
+  const [templates, setTemplates] = useState<TemplateOut[]>([]);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
 
@@ -30,9 +32,13 @@ export function LeadDrawer({
     let mounted = true;
     (async () => {
       try {
-        const items = await apiFetch<ThreadItem[]>(`/inbox/customers/${lead.id}/thread`);
+        const [items, tpls] = await Promise.all([
+          apiFetch<ThreadItem[]>(`/inbox/customers/${lead.id}/thread`),
+          apiFetch<TemplateOut[]>(`/templates`).catch(() => [] as TemplateOut[]),
+        ]);
         if (!mounted) return;
         setThread(items);
+        setTemplates(tpls);
       } catch (err: any) {
         toast.push(err?.message || "Failed to load thread", "error");
       }
@@ -175,6 +181,19 @@ export function LeadDrawer({
                 </div>
                 <div className="muted" style={{ fontSize: 12 }}>Current: {fmtDateTime(lead.next_follow_up_at)}</div>
               </div>
+            </div>
+          </div>
+
+          <div style={{ boxShadow: "none" }}>
+            <WhatsAppQuickAction customer={lead} templates={templates} />
+          </div>
+
+          <div className="card" style={{ boxShadow: "none" }}>
+            <div className="cardHeader" style={{ fontWeight: 800 }}>Lead form details</div>
+            <div className="cardBody" style={{ display: "grid", gap: 8 }}>
+              <div><span className="muted">Treatment: </span><b>{lead.latest_deal?.treatment_interest || "—"}</b></div>
+              <div><span className="muted">Preferred day: </span><b>{lead.latest_deal?.preferred_consultation_day || "—"}</b></div>
+              <div><span className="muted">Seminar: </span><b>{lead.latest_deal?.seminar_preference || "—"}</b></div>
             </div>
           </div>
 
