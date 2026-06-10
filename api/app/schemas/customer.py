@@ -20,6 +20,16 @@ class CustomerCreate(BaseModel):
     can_contact: bool = True
     language: str | None = Field(default=None, max_length=10)
 
+    lead_source: str | None = Field(default=None, max_length=120)
+    form_id: str | None = Field(default=None, max_length=120)
+    form_name: str | None = Field(default=None, max_length=250)
+    campaign_id: str | None = Field(default=None, max_length=120)
+    campaign_name: str | None = Field(default=None, max_length=250)
+    adset_id: str | None = Field(default=None, max_length=120)
+    adset_name: str | None = Field(default=None, max_length=250)
+    ad_id: str | None = Field(default=None, max_length=120)
+    ad_name: str | None = Field(default=None, max_length=250)
+
 
 class CustomerUpdate(BaseModel):
     name: str | None = None
@@ -34,6 +44,16 @@ class CustomerUpdate(BaseModel):
 
     # Phase 4B
     stage: str | None = Field(default=None, max_length=40)
+
+    lead_source: str | None = Field(default=None, max_length=120)
+    form_id: str | None = Field(default=None, max_length=120)
+    form_name: str | None = Field(default=None, max_length=250)
+    campaign_id: str | None = Field(default=None, max_length=120)
+    campaign_name: str | None = Field(default=None, max_length=250)
+    adset_id: str | None = Field(default=None, max_length=120)
+    adset_name: str | None = Field(default=None, max_length=250)
+    ad_id: str | None = Field(default=None, max_length=120)
+    ad_name: str | None = Field(default=None, max_length=250)
 
 
 class CustomerOut(BaseModel):
@@ -51,6 +71,16 @@ class CustomerOut(BaseModel):
     # Phase 4B additions
     stage: str
     tag_names: list[str] = []
+
+    lead_source: str | None = None
+    form_id: str | None = None
+    form_name: str | None = None
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    adset_id: str | None = None
+    adset_name: str | None = None
+    ad_id: str | None = None
+    ad_name: str | None = None
 
     # Latest deal is included so the UI can show lead form answers without
     # making an extra request on the contact list/inbox.

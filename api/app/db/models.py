@@ -10,6 +10,9 @@ from app.db.base import Base
 
 class UserRole(str, Enum):
     admin = "admin"
+    manager = "manager"
+    coordinator = "coordinator"
+    viewer = "viewer"
     user = "user"
 
 class User(Base):
@@ -63,6 +66,17 @@ class Customer(Base):
     next_follow_up_at = sa.Column(sa.DateTime(timezone=True))
     can_contact = sa.Column(sa.Boolean(), nullable=False, server_default=sa.text('true'))
     language = sa.Column(sa.String(10))
+
+    # Lead attribution fields, populated from Make/Meta where available.
+    lead_source = sa.Column(sa.String(120))
+    form_id = sa.Column(sa.String(120))
+    form_name = sa.Column(sa.String(250))
+    campaign_id = sa.Column(sa.String(120))
+    campaign_name = sa.Column(sa.String(250))
+    adset_id = sa.Column(sa.String(120))
+    adset_name = sa.Column(sa.String(250))
+    ad_id = sa.Column(sa.String(120))
+    ad_name = sa.Column(sa.String(250))
 
     # Phase 4B: simple funnel stage on the customer record.
     stage = sa.Column(sa.String(40), nullable=False, server_default="new")
@@ -133,6 +147,12 @@ class Deal(Base):
     treatment_interest = sa.Column(sa.String(200))
     preferred_consultation_day = sa.Column(sa.String(200))
     seminar_preference = sa.Column(sa.String(300))
+    event_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("events.id", ondelete="SET NULL"), nullable=True)
+    confirmation_sent_at = sa.Column(sa.DateTime(timezone=True))
+    confirmation_channel = sa.Column(sa.String(40))
+    confirmation_template_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("templates.id", ondelete="SET NULL"), nullable=True)
+    confirmed_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    lost_reason = sa.Column(sa.String(200))
 
     status = sa.Column(
     sa.Enum(DealStatus, name="deal_status"),
@@ -424,8 +444,12 @@ class FacebookLeadEvent(Base):
     page_id = sa.Column(sa.String(120))
     form_id = sa.Column(sa.String(120))
     campaign_id = sa.Column(sa.String(120))
+    campaign_name = sa.Column(sa.String(250))
     adset_id = sa.Column(sa.String(120))
+    adset_name = sa.Column(sa.String(250))
     ad_id = sa.Column(sa.String(120))
+    ad_name = sa.Column(sa.String(250))
+    form_name = sa.Column(sa.String(250))
 
     customer_id = sa.Column(
         sa.UUID(as_uuid=True),
@@ -444,6 +468,108 @@ class FacebookLeadEvent(Base):
 
     __table_args__ = (
         sa.Index("ix_facebook_lead_events_owner_created", "owner_user_id", "created_at"),
+    )
+
+
+class AuditLog(Base):
+    """Append-only activity log for CRM actions."""
+
+    __tablename__ = "audit_logs"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    actor_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True)
+    actor_email = sa.Column(sa.String(320))
+    action = sa.Column(sa.String(100), nullable=False)
+    entity_type = sa.Column(sa.String(80), nullable=False)
+    entity_id = sa.Column(sa.UUID(as_uuid=True), nullable=True)
+    before = sa.Column(sa.JSON(), nullable=True)
+    after = sa.Column(sa.JSON(), nullable=True)
+    meta = sa.Column("metadata", sa.JSON(), nullable=True)
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    actor = relationship("User")
+
+    __table_args__ = (
+        sa.Index("ix_audit_logs_created", "created_at"),
+        sa.Index("ix_audit_logs_entity", "entity_type", "entity_id"),
+        sa.Index("ix_audit_logs_actor_created", "actor_user_id", "created_at"),
+    )
+
+
+class Event(Base):
+    __tablename__ = "events"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    owner_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False)
+    name = sa.Column(sa.String(200), nullable=False)
+    location = sa.Column(sa.String(300))
+    description = sa.Column(sa.Text())
+    starts_on = sa.Column(sa.Date(), nullable=False)
+    ends_on = sa.Column(sa.Date(), nullable=False)
+    default_slot_minutes = sa.Column(sa.Integer(), nullable=False, server_default="30")
+    slot_capacity = sa.Column(sa.Integer(), nullable=False, server_default="1")
+    is_active = sa.Column(sa.Boolean(), nullable=False, server_default=sa.text("true"))
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    updated_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    days = relationship("EventDay", back_populates="event", cascade="all, delete-orphan")
+    appointments = relationship("Appointment", back_populates="event", cascade="all, delete-orphan")
+
+
+class EventDay(Base):
+    __tablename__ = "event_days"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    event_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    day = sa.Column(sa.Date(), nullable=False)
+    start_time = sa.Column(sa.Time(), nullable=False)
+    end_time = sa.Column(sa.Time(), nullable=False)
+    slot_minutes = sa.Column(sa.Integer(), nullable=False, server_default="30")
+    break_start_time = sa.Column(sa.Time())
+    break_end_time = sa.Column(sa.Time())
+    label = sa.Column(sa.String(120))
+
+    event = relationship("Event", back_populates="days")
+
+    __table_args__ = (sa.UniqueConstraint("event_id", "day", name="uq_event_days_event_day"),)
+
+
+class Appointment(Base):
+    __tablename__ = "appointments"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    event_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("events.id", ondelete="CASCADE"), nullable=False)
+    customer_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    deal_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("deals.id", ondelete="SET NULL"), nullable=True)
+    assigned_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True)
+    starts_at = sa.Column(sa.DateTime(timezone=True), nullable=False)
+    ends_at = sa.Column(sa.DateTime(timezone=True), nullable=False)
+    appointment_type = sa.Column(sa.String(80), nullable=False, server_default="consultation")
+    status = sa.Column(sa.String(40), nullable=False, server_default="booked")
+    notes = sa.Column(sa.Text())
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    updated_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    event = relationship("Event", back_populates="appointments")
+    customer = relationship("Customer")
+    deal = relationship("Deal")
+    assigned_user = relationship("User")
+
+    @property
+    def customer_name(self) -> str | None:
+        return self.customer.name if self.customer is not None else None
+
+    @property
+    def customer_phone(self) -> str | None:
+        return self.customer.phone if self.customer is not None else None
+
+    @property
+    def deal_treatment_interest(self) -> str | None:
+        return self.deal.treatment_interest if self.deal is not None else None
+
+    __table_args__ = (
+        sa.Index("ix_appointments_event_starts", "event_id", "starts_at"),
+        sa.Index("ix_appointments_customer", "customer_id"),
     )
 
 

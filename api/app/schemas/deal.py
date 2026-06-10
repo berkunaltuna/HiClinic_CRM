@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
@@ -7,15 +8,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class DealCreate(BaseModel):
-    # Allow clients to send either "amount" (preferred) or "value" (legacy/tests)
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
-    title: Optional[str] = None  # accepted but ignored by DB (no title column)
+    title: Optional[str] = None
     amount: float = Field(..., validation_alias="value")
     status: str = "open"
     treatment_interest: Optional[str] = None
     preferred_consultation_day: Optional[str] = None
     seminar_preference: Optional[str] = None
+    event_id: Optional[UUID] = None
+    lost_reason: Optional[str] = None
 
 
 class DealUpdate(BaseModel):
@@ -26,6 +28,8 @@ class DealUpdate(BaseModel):
     treatment_interest: Optional[str] = None
     preferred_consultation_day: Optional[str] = None
     seminar_preference: Optional[str] = None
+    event_id: Optional[UUID] = None
+    lost_reason: Optional[str] = None
 
 
 class DealOut(BaseModel):
@@ -37,6 +41,12 @@ class DealOut(BaseModel):
     treatment_interest: Optional[str] = None
     preferred_consultation_day: Optional[str] = None
     seminar_preference: Optional[str] = None
+    event_id: Optional[UUID] = None
+    confirmation_sent_at: Optional[datetime] = None
+    confirmation_channel: Optional[str] = None
+    confirmation_template_id: Optional[UUID] = None
+    confirmed_by_user_id: Optional[UUID] = None
+    lost_reason: Optional[str] = None
 
     class Config:
         from_attributes = True

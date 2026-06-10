@@ -8,9 +8,10 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
-from app.db.models import Customer, Interaction, OutboundMessage, Tag, CustomerTag, User
+from app.db.models import AuditLog, Customer, Deal, Interaction, OutboundMessage, Tag, CustomerTag, User
 from app.db.session import get_db
 from app.core.config import settings
+from app.schemas.audit import AuditLogOut
 from app.schemas.inbox import (
     InboxCustomerOut,
     ThreadItem,
@@ -19,7 +20,9 @@ from app.schemas.inbox import (
     TagActionIn,
     SendTextIn,
     SendTemplateIn,
+    MarkConfirmedIn,
 )
+from app.services.audit import record_audit
 
 router = APIRouter(prefix="/inbox", tags=["inbox"])
 
@@ -60,6 +63,7 @@ def _get_or_create_tag(db: Session, user: User, customer: Customer, name: str) -
 def list_inbox_customers(
     bucket: str | None = None,
     stage: str | None = None,
+    event_id: UUID | None = None,
     tag: str | None = None,
     q: str | None = None,
     limit: int = 50,
@@ -88,6 +92,8 @@ def list_inbox_customers(
         cq = cq.filter(Customer.owner_user_id == user.id)
     if stage:
         cq = cq.filter(Customer.stage == stage)
+    if event_id:
+        cq = cq.join(Deal, Deal.customer_id == Customer.id).filter(Deal.event_id == event_id)
     if q:
         like = f"%{q}%"
         cq = cq.filter(or_(Customer.name.ilike(like), Customer.phone.ilike(like), Customer.email.ilike(like), Customer.company.ilike(like)))
@@ -135,6 +141,15 @@ def list_inbox_customers(
                 last_activity_direction=last_activity_direction,
                 bucket=b,
                 latest_deal=c.latest_deal,
+                lead_source=c.lead_source,
+                form_id=c.form_id,
+                form_name=c.form_name,
+                campaign_id=c.campaign_id,
+                campaign_name=c.campaign_name,
+                adset_id=c.adset_id,
+                adset_name=c.adset_name,
+                ad_id=c.ad_id,
+                ad_name=c.ad_name,
             )
         )
 
@@ -167,6 +182,31 @@ def get_thread(
     return items
 
 
+@router.get("/customers/{customer_id}/activity", response_model=list[AuditLogOut])
+def get_customer_activity(
+    customer_id: UUID,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[AuditLogOut]:
+    c = _get_customer(db, customer_id, user)
+    deal_ids = [row[0] for row in db.query(Deal.id).filter(Deal.customer_id == c.id).all()]
+    entity_filters = [
+        (AuditLog.entity_type == "customer") & (AuditLog.entity_id == c.id),
+    ]
+    if deal_ids:
+        entity_filters.append((AuditLog.entity_type == "deal") & (AuditLog.entity_id.in_(deal_ids)))
+    # Some logs are attached to the customer through metadata rather than entity_id.
+    entity_filters.append(AuditLog.meta.op("->>")("customer_id") == str(c.id))
+    return (
+        db.query(AuditLog)
+        .filter(or_(*entity_filters))
+        .order_by(AuditLog.created_at.desc())
+        .limit(min(max(limit, 1), 500))
+        .all()
+    )
+
+
 @router.post("/customers/{customer_id}/stage", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 def set_stage(
     customer_id: UUID,
@@ -175,7 +215,26 @@ def set_stage(
     user: User = Depends(get_current_user),
 ) -> Response:
     c = _get_customer(db, customer_id, user)
+    before = {"stage": c.stage}
     c.stage = payload.stage
+    c.updated_at = datetime.now(timezone.utc)
+    latest_deal = c.latest_deal
+    if latest_deal is not None:
+        if payload.stage == "lost":
+            latest_deal.status = "lost"
+            latest_deal.lost_reason = payload.lost_reason or latest_deal.lost_reason
+        elif payload.stage in ("deposit_paid", "treatment_completed", "treatment_done"):
+            latest_deal.status = "won" if payload.stage in ("treatment_completed", "treatment_done") else latest_deal.status
+    record_audit(
+        db,
+        actor=user,
+        action="pipeline.stage_changed",
+        entity_type="customer",
+        entity_id=c.id,
+        before=before,
+        after={"stage": c.stage, "lost_reason": payload.lost_reason},
+        metadata={"customer_id": str(c.id), "customer_name": c.name},
+    )
     db.commit()
     return Response(status_code=204)
 
@@ -188,10 +247,22 @@ def set_followup(
     user: User = Depends(get_current_user),
 ) -> Response:
     c = _get_customer(db, customer_id, user)
+    before = {"next_follow_up_at": c.next_follow_up_at.isoformat() if c.next_follow_up_at else None}
     if payload.minutes_from_now is not None:
         c.next_follow_up_at = datetime.now(timezone.utc) + timedelta(minutes=payload.minutes_from_now)
     else:
         c.next_follow_up_at = payload.next_follow_up_at
+    c.updated_at = datetime.now(timezone.utc)
+    record_audit(
+        db,
+        actor=user,
+        action="pipeline.followup_changed",
+        entity_type="customer",
+        entity_id=c.id,
+        before=before,
+        after={"next_follow_up_at": c.next_follow_up_at.isoformat() if c.next_follow_up_at else None},
+        metadata={"customer_id": str(c.id), "customer_name": c.name},
+    )
     db.commit()
     return Response(status_code=204)
 
@@ -208,6 +279,15 @@ def add_tag(
     exists_link = db.query(CustomerTag).filter(CustomerTag.customer_id == customer_id, CustomerTag.tag_id == t.id).first()
     if not exists_link:
         db.add(CustomerTag(owner_user_id=c.owner_user_id, customer_id=customer_id, tag_id=t.id))
+        record_audit(
+            db,
+            actor=user,
+            action="pipeline.tag_added",
+            entity_type="customer",
+            entity_id=c.id,
+            after={"tag": t.name},
+            metadata={"customer_id": str(c.id), "customer_name": c.name},
+        )
     db.commit()
     return Response(status_code=204)
 
@@ -223,7 +303,49 @@ def remove_tag(
     t = db.query(Tag).filter(Tag.owner_user_id == c.owner_user_id, Tag.name == payload.tag).first()
     if not t:
         return Response(status_code=204)
-    db.query(CustomerTag).filter(CustomerTag.customer_id == customer_id, CustomerTag.tag_id == t.id).delete()
+    deleted = db.query(CustomerTag).filter(CustomerTag.customer_id == customer_id, CustomerTag.tag_id == t.id).delete()
+    if deleted:
+        record_audit(
+            db,
+            actor=user,
+            action="pipeline.tag_removed",
+            entity_type="customer",
+            entity_id=c.id,
+            before={"tag": t.name},
+            metadata={"customer_id": str(c.id), "customer_name": c.name},
+        )
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.post("/customers/{customer_id}/mark-confirmed", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+def mark_confirmed(
+    customer_id: UUID,
+    payload: MarkConfirmedIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    c = _get_customer(db, customer_id, user)
+    deal = c.latest_deal
+    if deal is None:
+        raise HTTPException(status_code=400, detail="Customer has no deal to confirm")
+    before = {
+        "confirmation_sent_at": deal.confirmation_sent_at.isoformat() if deal.confirmation_sent_at else None,
+        "confirmation_channel": deal.confirmation_channel,
+    }
+    deal.confirmation_sent_at = datetime.now(timezone.utc)
+    deal.confirmation_channel = payload.channel or "manual"
+    deal.confirmed_by_user_id = user.id
+    record_audit(
+        db,
+        actor=user,
+        action="appointment.confirmation_marked",
+        entity_type="deal",
+        entity_id=deal.id,
+        before=before,
+        after={"confirmation_sent_at": deal.confirmation_sent_at.isoformat(), "confirmation_channel": deal.confirmation_channel},
+        metadata={"customer_id": str(c.id), "customer_name": c.name},
+    )
     db.commit()
     return Response(status_code=204)
 
@@ -251,6 +373,22 @@ def send_text(
         cancel_on_inbound=payload.cancel_on_inbound,
     )
     db.add(msg)
+    if payload.mark_confirmation:
+        c = _get_customer(db, customer_id, user)
+        deal = c.latest_deal
+        if deal is not None:
+            deal.confirmation_sent_at = datetime.now(timezone.utc)
+            deal.confirmation_channel = payload.channel
+            deal.confirmed_by_user_id = user.id
+    record_audit(
+        db,
+        actor=user,
+        action="pipeline.message_queued",
+        entity_type="customer",
+        entity_id=customer_id,
+        after={"channel": msg.channel, "status": msg.status},
+        metadata={"customer_id": str(customer_id)},
+    )
     db.commit()
     db.refresh(msg)
     return {"id": str(msg.id), "status": msg.status}
@@ -280,6 +418,23 @@ def send_template(
         cancel_on_inbound=payload.cancel_on_inbound,
     )
     db.add(msg)
+    if payload.mark_confirmation:
+        c = _get_customer(db, customer_id, user)
+        deal = c.latest_deal
+        if deal is not None:
+            deal.confirmation_sent_at = datetime.now(timezone.utc)
+            deal.confirmation_channel = payload.channel
+            deal.confirmation_template_id = payload.template_id
+            deal.confirmed_by_user_id = user.id
+    record_audit(
+        db,
+        actor=user,
+        action="pipeline.template_queued",
+        entity_type="customer",
+        entity_id=customer_id,
+        after={"channel": msg.channel, "status": msg.status, "template_id": str(msg.template_id) if msg.template_id else None},
+        metadata={"customer_id": str(customer_id)},
+    )
     db.commit()
     db.refresh(msg)
     return {"id": str(msg.id), "status": msg.status}

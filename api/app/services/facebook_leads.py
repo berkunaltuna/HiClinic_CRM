@@ -12,17 +12,41 @@ from sqlalchemy.orm import Session
 import sqlalchemy as sa
 
 from app.core.config import settings
-from app.db.models import Customer, Deal, DealStatus, FacebookLeadEvent, Interaction, User
+from app.db.models import Customer, Deal, DealStatus, FacebookLeadEvent, Interaction, OutboundMessage, User
 from app.services.tags import add_tag_to_customer
 
 GRAPH_API_BASE = "https://graph.facebook.com"
 
 TREATMENT_TAG_MAP = {
+    # Human-readable Meta values
     "Hair Transplant": "Hair Transplant",
     "Facial Aesthetics (Face Lift ect))": "Facial Aesthetics",
     "Eyelid surgery (blepharoplasty)": "Eyelid Surgery",
     "Body Contouring (Tummy Tuck, BBL, Lipo)": "Body Contouring",
     "Breast Aesthetic Surgery": "Breast Aesthetic Surgery",
+    # Make/Facebook slug values currently sent by the Make scenario
+    "hair_transplant": "Hair Transplant",
+    "facial_aesthetics_(face_lift_ect))": "Facial Aesthetics",
+    "facial_aesthetics_face_lift_ect": "Facial Aesthetics",
+    "eyelid_surgery_(blepharoplasty)": "Eyelid Surgery",
+    "body_contouring_(tummy_tuck,_bbl,_lipo)": "Body Contouring",
+    "body_contouring_tummy_tuck_bbl_lipo": "Body Contouring",
+    "breast_aesthetic_surgery": "Breast Aesthetic Surgery",
+}
+
+CONSULTATION_DAY_TAG_MAP = {
+    "saturday,_27th_june_2026": "Saturday 27 June",
+    "saturday_27th_june_2026": "Saturday 27 June",
+    "sunday,_28th_june_2026": "Sunday 28 June",
+    "sunday_28th_june_2026": "Sunday 28 June",
+    "either": "Either Day",
+    "either_day": "Either Day",
+}
+
+SEMINAR_PREFERENCE_TAG_MAP = {
+    "one_to_one_consultation": "One-to-One Consultation",
+    "yes,_i_am_interested_in_learning_more_about_procedures": "Seminar Interested",
+    "yes_i_am_interested_in_learning_more_about_procedures": "Seminar Interested",
 }
 
 
@@ -183,6 +207,80 @@ def _coalesce(*values: Any) -> str | None:
     return None
 
 
+def _normalise_answer_key(value: Any) -> str:
+    text = str(value or "").strip()
+    # Make commonly sends values like sunday,_28th_june_2026. Keep commas and
+    # brackets where they are meaningful, but also collapse spaces for matching.
+    return text.replace(" ", "_").lower()
+
+
+def _split_answer_values(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    text = str(value).strip()
+    if not text:
+        return []
+    # Checkbox answers may arrive as a JSON array string or as comma/newline separated text.
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [str(v).strip() for v in parsed if str(v).strip()]
+    except Exception:
+        pass
+    if "\n" in text:
+        return [part.strip() for part in text.splitlines() if part.strip()]
+    if ";" in text:
+        return [part.strip() for part in text.split(";") if part.strip()]
+    return [text]
+
+
+def _map_answer_to_tag(value: Any, mapping: dict[str, str]) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    return mapping.get(text) or mapping.get(_normalise_answer_key(text))
+
+
+def _collect_form_tags(treatment_interest: Any, preferred_consultation_day: Any, seminar_preference: Any) -> list[str]:
+    tags: list[str] = []
+    for value in _split_answer_values(treatment_interest):
+        tag = _map_answer_to_tag(value, TREATMENT_TAG_MAP)
+        if tag:
+            tags.append(tag)
+    for value in _split_answer_values(preferred_consultation_day):
+        tag = _map_answer_to_tag(value, CONSULTATION_DAY_TAG_MAP)
+        if tag:
+            tags.append(tag)
+    for value in _split_answer_values(seminar_preference):
+        tag = _map_answer_to_tag(value, SEMINAR_PREFERENCE_TAG_MAP)
+        if tag:
+            tags.append(tag)
+    return list(dict.fromkeys(tags))
+
+
+
+def _clean_tag_fragment(value: Any) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    text = " ".join(text.replace("_", " ").split())
+    return text[:80]
+
+def _attribution_from_lead(lead: dict[str, Any]) -> dict[str, str | None]:
+    return {
+        "lead_source": _coalesce(lead.get("platform"), "facebook"),
+        "form_id": _coalesce(lead.get("form_id")),
+        "form_name": _coalesce(lead.get("form_name")),
+        "campaign_id": _coalesce(lead.get("campaign_id")),
+        "campaign_name": _coalesce(lead.get("campaign_name")),
+        "adset_id": _coalesce(lead.get("adgroup_id"), lead.get("adset_id")),
+        "adset_name": _coalesce(lead.get("adgroup_name"), lead.get("adset_name")),
+        "ad_id": _coalesce(lead.get("ad_id")),
+        "ad_name": _coalesce(lead.get("ad_name")),
+    }
+
 def _build_field_data_from_make_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
     existing = payload.get("field_data")
     if isinstance(existing, list) and existing:
@@ -206,6 +304,21 @@ def _build_field_data_from_make_payload(payload: dict[str, Any]) -> list[dict[st
         "email": _coalesce(payload.get("email"), payload.get("email_address")),
         "phone_number": _coalesce(payload.get("phone"), payload.get("phone_number"), payload.get("mobile")),
         "company_name": _coalesce(payload.get("company"), payload.get("company_name")),
+        "treatment_interest": _coalesce(
+            payload.get("treatment_interest"),
+            payload.get("treatment"),
+            payload.get("treatments"),
+            payload.get("which_treatment_are_you_interested_in"),
+        ),
+        "preferred_consultation_day": _coalesce(
+            payload.get("preferred_consultation_day"),
+            payload.get("consultation_day"),
+            payload.get("preferred_day"),
+        ),
+        "seminar_preference": _coalesce(
+            payload.get("seminar_preference"),
+            payload.get("seminar"),
+        ),
     }
     built = [
         {"name": key, "values": [value]}
@@ -225,6 +338,7 @@ def _graph_lead_from_make_payload(payload: dict[str, Any]) -> dict[str, Any]:
     lead.setdefault("id", _coalesce(payload.get("lead_id"), payload.get("leadgen_id"), payload.get("id")))
     lead.setdefault("page_id", _coalesce(payload.get("page_id"), payload.get("page")))
     lead.setdefault("form_id", _coalesce(payload.get("form_id")))
+    lead.setdefault("form_name", _coalesce(payload.get("form_name")))
     lead.setdefault("campaign_id", _coalesce(payload.get("campaign_id")))
     lead.setdefault("campaign_name", _coalesce(payload.get("campaign_name")))
     lead.setdefault("adgroup_id", _coalesce(payload.get("adset_id"), payload.get("adgroup_id")))
@@ -250,16 +364,6 @@ def _ingest_graph_style_lead(
         return
 
     field_data = lead.get("field_data") or []
-
-    selected_treatments: list[str] = []
-
-    for field in field_data:
-        values = field.get("values") or []
-        for value in values:
-            text = str(value).strip()
-            tag_name = TREATMENT_TAG_MAP.get(text)
-            if tag_name:
-                selected_treatments.append(tag_name)
 
     full_name = _extract_field_fuzzy(field_data, "full_name", "full name", "name")
     email = _extract_field_fuzzy(field_data, "email", "email address")
@@ -289,6 +393,13 @@ def _ingest_graph_style_lead(
         "seminar preference",
     )
 
+    form_tag_names = _collect_form_tags(
+        treatment_interest,
+        preferred_consultation_day,
+        seminar_preference,
+    )
+    attribution = _attribution_from_lead(lead)
+
     customer = _find_existing_customer(db, owner.id, email=email, phone=phone)
     is_new_customer = customer is None
     if customer is None:
@@ -300,11 +411,18 @@ def _ingest_graph_style_lead(
             company=company,
             can_contact=True,
             language="en",
+            lead_source=attribution.get("lead_source"),
+            form_id=attribution.get("form_id"),
+            form_name=attribution.get("form_name"),
+            campaign_id=attribution.get("campaign_id"),
+            campaign_name=attribution.get("campaign_name"),
+            adset_id=attribution.get("adset_id"),
+            adset_name=attribution.get("adset_name"),
+            ad_id=attribution.get("ad_id"),
+            ad_name=attribution.get("ad_name"),
         )
         db.add(customer)
         db.flush()
-        for tag_name in selected_treatments:
-            add_tag_to_customer(db, customer=customer, tag_name=tag_name, owner=owner)
     else:
         if full_name and (not customer.name or customer.name.startswith("Facebook Lead")):
             customer.name = full_name
@@ -314,6 +432,9 @@ def _ingest_graph_style_lead(
             customer.phone = phone
         if company and not customer.company:
             customer.company = company
+    for attr_key, attr_value in attribution.items():
+        if attr_value and not getattr(customer, attr_key, None):
+            setattr(customer, attr_key, attr_value)
 
     existing_open_deal = (
         db.query(Deal)
@@ -348,8 +469,12 @@ def _ingest_graph_style_lead(
         page_id=_coalesce(lead.get("page_id")),
         form_id=_coalesce(lead.get("form_id")),
         campaign_id=_coalesce(lead.get("campaign_id")),
+        campaign_name=_coalesce(lead.get("campaign_name")),
         adset_id=_coalesce(lead.get("adgroup_id"), lead.get("adset_id")),
+        adset_name=_coalesce(lead.get("adgroup_name"), lead.get("adset_name")),
         ad_id=_coalesce(lead.get("ad_id")),
+        ad_name=_coalesce(lead.get("ad_name")),
+        form_name=_coalesce(lead.get("form_name")),
         customer_id=customer.id,
         deal_id=deal.id if deal is not None else None,
         raw_payload=raw_payload,
@@ -368,6 +493,17 @@ def _ingest_graph_style_lead(
         "preferred_consultation_day": preferred_consultation_day,
         "seminar_preference": seminar_preference,
     }
+    # Treat new Facebook/Make lead submissions as inbound activity. This also
+    # cancels any queued outreach marked cancel_on_inbound for returning leads.
+    db.query(OutboundMessage).filter(
+        OutboundMessage.customer_id == customer.id,
+        OutboundMessage.status == "queued",
+        OutboundMessage.cancel_on_inbound.is_(True),
+    ).update(
+        {"status": "cancelled", "cancelled_at": sa.text("now()")},
+        synchronize_session=False,
+    )
+
     interaction = Interaction(
         customer_id=customer.id,
         owner_user_id=owner.id,
@@ -389,8 +525,17 @@ def _ingest_graph_style_lead(
         add_tag_to_customer(db, customer=customer, tag_name=f"day:{preferred_consultation_day}")
     if seminar_preference:
         add_tag_to_customer(db, customer=customer, tag_name=f"seminar:{seminar_preference}")
+    for prefix, attr_key in [("form", "form_name"), ("campaign", "campaign_name"), ("adset", "adset_name"), ("ad", "ad_name")]:
+        fragment = _clean_tag_fragment(attribution.get(attr_key))
+        if fragment:
+            add_tag_to_customer(db, customer=customer, tag_name=f"{prefix}:{fragment}")
 
-    if customer.stage == "new":
+    for tag_name in form_tag_names:
+        add_tag_to_customer(db, customer=customer, tag_name=tag_name)
+
+    # Facebook/Make lead ingestion should never move a lead to Contacted.
+    # New customers stay in the New stage until a user explicitly changes them.
+    if is_new_customer:
         customer.stage = "new"
 
     db.commit()

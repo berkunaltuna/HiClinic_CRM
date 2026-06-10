@@ -3,23 +3,53 @@
 import { useEffect, useMemo, useState } from "react";
 import { Topbar } from "@/components/Topbar";
 import { apiFetch } from "@/lib/api";
-import type { InboxCustomerOut } from "@/lib/types";
-import { PIPELINE_STAGES, SERVICE_TAGS, stageLabel } from "@/lib/constants";
+import type { EventOut, InboxCustomerOut } from "@/lib/types";
+import { LOST_REASONS, PIPELINE_STAGES, SERVICE_TAGS, stageLabel } from "@/lib/constants";
 import { fmtDateTime } from "@/lib/dates";
 import { LeadDrawer } from "@/components/LeadDrawer";
 import { useToast } from "@/components/Toast";
 
+function daysSince(date?: string | null): number | null {
+  if (!date) return null;
+  const t = new Date(date).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.floor((Date.now() - t) / (1000 * 60 * 60 * 24));
+}
+
+function followupBadge(date?: string | null): string | null {
+  if (!date) return null;
+  const t = new Date(date).getTime();
+  if (!Number.isFinite(t)) return null;
+  const diffDays = Math.floor((t - Date.now()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return `Overdue ${Math.abs(diffDays)}d`;
+  if (diffDays === 0) return "Follow-up today";
+  return null;
+}
+
 export default function PipelinePage() {
   const toast = useToast();
   const [leads, setLeads] = useState<InboxCustomerOut[]>([]);
+  const [events, setEvents] = useState<EventOut[]>([]);
   const [busy, setBusy] = useState(true);
   const [q, setQ] = useState("");
   const [tag, setTag] = useState("");
+  const [eventId, setEventId] = useState("");
   const [selected, setSelected] = useState<InboxCustomerOut | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [bulkStage, setBulkStage] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [viewMode, setViewMode] = useState<"fit" | "comfortable">("fit");
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("pipeline_view_mode");
+    if (saved === "fit" || saved === "comfortable") setViewMode(saved);
+  }, []);
+
+  function changeViewMode(mode: "fit" | "comfortable") {
+    setViewMode(mode);
+    window.localStorage.setItem("pipeline_view_mode", mode);
+  }
 
   async function load(): Promise<InboxCustomerOut[]> {
     setBusy(true);
@@ -28,8 +58,13 @@ export default function PipelinePage() {
       qs.set("limit", "200");
       if (q.trim()) qs.set("q", q.trim());
       if (tag) qs.set("tag", tag);
-      const data = await apiFetch<InboxCustomerOut[]>(`/inbox/customers?${qs.toString()}`);
+      if (eventId) qs.set("event_id", eventId);
+      const [data, evs] = await Promise.all([
+        apiFetch<InboxCustomerOut[]>(`/inbox/customers?${qs.toString()}`),
+        apiFetch<EventOut[]>(`/events`).catch(() => [] as EventOut[]),
+      ]);
       setLeads(data);
+      setEvents(evs);
       setSelected((prev) => (prev ? data.find((x) => x.id === prev.id) || null : prev));
       return data;
     } catch (err: any) {
@@ -71,11 +106,16 @@ export default function PipelinePage() {
   }
 
   async function moveLeadToStage(leadId: string, stage: string) {
+    let lost_reason: string | undefined;
+    if (stage === "lost") {
+      const selectedReason = prompt(`Lost reason:\n${LOST_REASONS.join("\n")}`, "No response") || "Other";
+      lost_reason = selectedReason.trim() || "Other";
+    }
     await apiFetch(`/inbox/customers/${leadId}/stage`, {
       method: "POST",
-      body: JSON.stringify({ stage }),
+      body: JSON.stringify({ stage, lost_reason }),
     });
-    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, stage } : l)));
+    setLeads((prev) => prev.map((l) => (l.id === leadId ? { ...l, stage, latest_deal: l.latest_deal ? { ...l.latest_deal, lost_reason: lost_reason || l.latest_deal.lost_reason } : l.latest_deal } : l)));
     if (selected?.id === leadId) setSelected((prev) => (prev ? { ...prev, stage } : prev));
   }
 
@@ -116,11 +156,19 @@ export default function PipelinePage() {
         title="Pipeline"
         right={
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-            <input placeholder="Search name / phone / email / company" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 320 }} />
+            <input placeholder="Search name / phone / email / company" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 300 }} />
+            <select value={eventId} onChange={(e) => setEventId(e.target.value)}>
+              <option value="">All events</option>
+              {events.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+            </select>
             <select value={tag} onChange={(e) => setTag(e.target.value)}>
               <option value="">All patients</option>
               {SERVICE_TAGS.map((t) => <option key={t} value={t}>{t.replace("service:", "")}</option>)}
             </select>
+            <div className="pipelineViewToggle" aria-label="Pipeline view mode">
+              <button type="button" className={viewMode === "fit" ? "active" : ""} onClick={() => changeViewMode("fit")}>Fit</button>
+              <button type="button" className={viewMode === "comfortable" ? "active" : ""} onClick={() => changeViewMode("comfortable")}>Comfort</button>
+            </div>
             <button className="btn" onClick={load} disabled={busy}>{busy ? "Loading…" : "Refresh"}</button>
           </div>
         }
@@ -138,11 +186,11 @@ export default function PipelinePage() {
             <button className="btn" disabled={!totalSelected || bulkBusy} onClick={() => deleteCustomers(Array.from(selectedIds))}>Delete</button>
             <button className="btn" disabled={!totalSelected} onClick={clearSelected}>Clear</button>
           </div>
-          <div className="muted" style={{ fontSize: 12 }}>Tip: drag cards between stages, or bulk move/delete selected leads.</div>
+          <div className="muted" style={{ fontSize: 12 }}>Drag cards between stages. Open a card to send confirmation emails or editable WhatsApp templates.</div>
         </div>
       </div>
 
-      <div className="kanban">
+      <div className={`kanban kanban-${viewMode}`}>
         {PIPELINE_STAGES.map((stage) => {
           const stageLeads = grouped[stage] || [];
           return (
@@ -169,53 +217,41 @@ export default function PipelinePage() {
                   }
                 }}
               >
-                {stageLeads.map((l) => (
-                  <div
-                    key={l.id}
-                    className={`cardMini ${draggingId === l.id ? "cardMiniDragging" : ""}`}
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData("text/plain", l.id);
-                      e.dataTransfer.effectAllowed = "move";
-                      setDraggingId(l.id);
-                    }}
-                    onDragEnd={() => setDraggingId(null)}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={async (e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const id = e.dataTransfer.getData("text/plain");
-                      setDraggingId(null);
-                      if (!id) return;
-                      try {
-                        await moveLeadToStage(id, stage);
-                        toast.push("Moved");
-                      } catch (err: any) {
-                        toast.push(err?.message || "Failed to move lead", "error");
-                      }
-                    }}
-                    onClick={() => setSelected(l)}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                      <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }} onClick={(e) => e.stopPropagation()}>
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(l.id)}
-                          onChange={() => toggleSelected(l.id)}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                        <span style={{ fontWeight: 900 }}>{l.name}</span>
-                      </label>
-                      <span className="badge">{l.bucket}</span>
+                {stageLeads.map((l) => {
+                  const age = daysSince(l.last_activity_at);
+                  const fu = followupBadge(l.next_follow_up_at);
+                  const confirmed = Boolean(l.latest_deal?.confirmation_sent_at);
+                  return (
+                    <div
+                      key={l.id}
+                      className={`cardMini ${draggingId === l.id ? "cardMiniDragging" : ""}`}
+                      draggable
+                      onDragStart={(e) => { e.dataTransfer.setData("text/plain", l.id); e.dataTransfer.effectAllowed = "move"; setDraggingId(l.id); }}
+                      onDragEnd={() => setDraggingId(null)}
+                      onClick={() => setSelected(l)}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, minWidth: 0 }}>
+                        <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer", minWidth: 0, flex: 1 }} onClick={(e) => e.stopPropagation()}>
+                          <input type="checkbox" checked={selectedIds.has(l.id)} onChange={() => toggleSelected(l.id)} onClick={(e) => e.stopPropagation()} />
+                          <span style={{ fontWeight: 900, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</span>
+                        </label>
+                        <span className="badge">{l.bucket}</span>
+                      </div>
+                      <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{l.company || l.ad_name || l.campaign_name || "—"}</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                        {confirmed ? <span className="chip">✓ Confirmed</span> : stage === "appointment_booked" ? <span className="chip">⚠ Not confirmed</span> : null}
+                        {fu && <span className="chip">⚠ {fu}</span>}
+                        {age != null && age >= 7 && <span className="chip">Last contact {age}d ago</span>}
+                        {l.latest_deal?.event_id && <span className="chip">Event assigned</span>}
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                        {(l.tags || []).slice(0, 3).map((t) => <span key={t} className="chip">{t}</span>)}
+                        {(l.tags || []).length > 3 && <span className="chip">+{(l.tags || []).length - 3}</span>}
+                      </div>
+                      <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>Last: {fmtDateTime(l.last_activity_at)}</div>
                     </div>
-                    <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{l.company || "—"}</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-                      {(l.tags || []).slice(0, 3).map((t) => <span key={t} className="chip">{t}</span>)}
-                      {(l.tags || []).length > 3 && <span className="chip">+{(l.tags || []).length - 3}</span>}
-                    </div>
-                    <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>Last: {fmtDateTime(l.last_activity_at)}</div>
-                  </div>
-                ))}
+                  );
+                })}
                 {!busy && !stageLeads.length && <div className="muted" style={{ padding: 10 }}>No leads.</div>}
               </div>
             </section>

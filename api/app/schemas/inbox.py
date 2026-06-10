@@ -25,9 +25,19 @@ class InboxCustomerOut(BaseModel):
     bucket: str
     latest_deal: DealOut | None = None
 
+    lead_source: str | None = None
+    form_id: str | None = None
+    form_name: str | None = None
+    campaign_id: str | None = None
+    campaign_name: str | None = None
+    adset_id: str | None = None
+    adset_name: str | None = None
+    ad_id: str | None = None
+    ad_name: str | None = None
+
 
 class ThreadItem(BaseModel):
-    kind: str  # interaction | outbound_message
+    kind: str
     id: UUID
     direction: str
     channel: str
@@ -40,6 +50,7 @@ class ThreadItem(BaseModel):
 
 class SetStageIn(BaseModel):
     stage: str = Field(min_length=1, max_length=40)
+    lost_reason: str | None = Field(default=None, max_length=200)
 
 
 class SetFollowUpIn(BaseModel):
@@ -56,6 +67,7 @@ class SendTextIn(BaseModel):
     channel: str = "whatsapp"
     delay_minutes: int | None = Field(default=None, ge=0, le=60 * 24 * 30)
     cancel_on_inbound: bool = False
+    mark_confirmation: bool = False
 
 
 class SendTemplateIn(BaseModel):
@@ -64,3 +76,8 @@ class SendTemplateIn(BaseModel):
     variables: dict | None = None
     delay_minutes: int | None = Field(default=None, ge=0, le=60 * 24 * 30)
     cancel_on_inbound: bool = False
+    mark_confirmation: bool = False
+
+
+class MarkConfirmedIn(BaseModel):
+    channel: str = Field(default="manual", max_length=40)

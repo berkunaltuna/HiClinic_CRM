@@ -48,6 +48,22 @@ class EmailSendRequest(BaseModel):
         return self
 
 
+class ConfirmationEmailRequest(BaseModel):
+    template_id: Optional[UUID] = None
+    template_name: Optional[str] = None
+    appointment_id: Optional[UUID] = None
+    subject: Optional[str] = None
+    body: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_content(self):
+        has_template = bool(self.template_id or self.template_name)
+        has_direct = bool((self.subject or "").strip()) and bool((self.body or "").strip())
+        if not has_template and not has_direct:
+            raise ValueError("Either template_id/template_name OR subject+body is required")
+        return self
+
+
 class EmailSendOut(BaseModel):
     provider_message_id: str
     interaction_id: UUID

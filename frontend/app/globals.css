@@ -232,10 +232,16 @@ input:focus, select:focus, textarea:focus {
 /* Kanban */
 .kanban {
   display: grid;
-  grid-template-columns: repeat(6, minmax(240px, 1fr));
-  gap: 12px;
-  overflow-x: auto;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  overflow-x: visible;
   padding-bottom: 8px;
+}
+
+@media (max-width: 1280px) {
+  .kanban { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .kanbanColHeader { padding: 8px 9px; }
+  .cardMini { padding: 8px; }
 }
 
 .kanbanCol {
@@ -312,7 +318,167 @@ input:focus, select:focus, textarea:focus {
 
 
 .kanban { align-items: start; }
-.kanbanCol { display: grid; grid-template-rows: auto 1fr; min-height: 72vh; max-height: 78vh; }
+.kanbanCol { display: grid; grid-template-rows: auto 1fr; min-height: 72vh; max-height: 78vh; min-width: 0; }
 .kanbanCards { padding: 10px; display: grid; gap: 10px; overflow-y: auto; min-height: 140px; }
 .kanbanDropActive { background: rgba(30,103,150,0.04); }
 .cardMiniDragging { opacity: .55; }
+
+
+/* Pipeline fit polish: keep all stages visible in one desktop window */
+.kanban {
+  grid-template-columns: repeat(9, minmax(92px, 1fr));
+  gap: 6px;
+  width: 100%;
+  overflow-x: hidden;
+}
+.kanbanCol {
+  min-width: 0;
+  border-radius: 12px;
+}
+.kanbanColHeader {
+  padding: 7px 6px;
+  gap: 4px;
+  font-size: 11px;
+  line-height: 1.15;
+  align-items: flex-start;
+}
+.kanbanColHeader .chip {
+  padding: 3px 5px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.kanbanCards {
+  padding: 6px;
+  gap: 6px;
+}
+.cardMini {
+  padding: 7px;
+  border-radius: 10px;
+  font-size: 11px;
+}
+.cardMini .chip,
+.cardMini .badge {
+  padding: 3px 5px;
+  font-size: 10px;
+  line-height: 1.1;
+}
+.cardMini .muted {
+  font-size: 10px !important;
+}
+.cardMini input[type="checkbox"] {
+  width: 13px;
+  height: 13px;
+}
+@media (max-width: 1180px) {
+  .kanban {
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
+    overflow-x: visible;
+  }
+}
+@media (max-width: 760px) {
+  .kanban {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Pipeline view modes: scoped so shared chips elsewhere are untouched */
+.pipelineViewToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255,255,255,0.72);
+}
+.pipelineViewToggle button {
+  border: 0;
+  background: transparent;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  color: var(--muted);
+}
+.pipelineViewToggle button.active {
+  background: var(--primary);
+  color: white;
+}
+.kanban.kanban-fit {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(112px, 1fr));
+  gap: 8px;
+  width: 100%;
+  overflow-x: hidden;
+}
+.kanban.kanban-fit .kanbanCol {
+  min-width: 0;
+}
+.kanban.kanban-fit .kanbanColHeader {
+  padding: 8px 7px;
+  font-size: 11px;
+}
+.kanban.kanban-fit .kanbanCards {
+  padding: 7px;
+  gap: 7px;
+}
+.kanban.kanban-fit .cardMini {
+  padding: 8px;
+  font-size: 11px;
+}
+.kanban.kanban-fit .cardMini .chip,
+.kanban.kanban-fit .cardMini .badge,
+.kanban.kanban-fit .kanbanColHeader .chip {
+  padding: 3px 5px;
+  font-size: 10px;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.kanban.kanban-comfortable {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 16px;
+  align-items: stretch;
+}
+.kanban.kanban-comfortable .kanbanCol {
+  flex: 0 0 300px;
+  width: 300px;
+  max-width: 300px;
+}
+.kanban.kanban-comfortable .cardMini {
+  overflow: hidden;
+}
+.kanban .cardMini * {
+  min-width: 0;
+}
+.kanban .cardMini .chip,
+.kanban .cardMini .badge {
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 1180px) {
+  .kanban.kanban-fit {
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
+    overflow-x: visible;
+  }
+}
+@media (max-width: 760px) {
+  .kanban.kanban-fit,
+  .kanban.kanban-comfortable {
+    display: grid;
+    grid-template-columns: 1fr;
+    overflow-x: visible;
+  }
+  .kanban.kanban-comfortable .kanbanCol {
+    width: auto;
+    max-width: none;
+    flex-basis: auto;
+  }
+}

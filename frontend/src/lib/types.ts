@@ -23,6 +23,15 @@ export type CustomerOut = {
   stage: string;
   tag_names: string[];
   latest_deal: DealOut | null;
+  lead_source: string | null;
+  form_id: string | null;
+  form_name: string | null;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  adset_id: string | null;
+  adset_name: string | null;
+  ad_id: string | null;
+  ad_name: string | null;
 };
 
 export type InboxCustomerOut = {
@@ -40,6 +49,15 @@ export type InboxCustomerOut = {
   last_activity_direction: string | null;
   bucket: "followup_due" | "open" | "waiting" | "closed" | string;
   latest_deal: DealOut | null;
+  lead_source: string | null;
+  form_id: string | null;
+  form_name: string | null;
+  campaign_id: string | null;
+  campaign_name: string | null;
+  adset_id: string | null;
+  adset_name: string | null;
+  ad_id: string | null;
+  ad_name: string | null;
 };
 
 export type ThreadItem = {
@@ -62,6 +80,12 @@ export type DealOut = {
   treatment_interest: string | null;
   preferred_consultation_day: string | null;
   seminar_preference: string | null;
+  event_id: UUID | null;
+  confirmation_sent_at: string | null;
+  confirmation_channel: string | null;
+  confirmation_template_id: UUID | null;
+  confirmed_by_user_id: UUID | null;
+  lost_reason: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -120,3 +144,73 @@ export type KPIResponse = {
   outcomes: Record<string, number>;
   conversion_rates: Record<string, number>;
 };
+
+export type UserOut = {
+  id: UUID;
+  email: string;
+  role: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AuditLogOut = {
+  id: UUID;
+  actor_user_id: UUID | null;
+  actor_email: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: UUID | null;
+  before: Record<string, any> | null;
+  after: Record<string, any> | null;
+  meta: Record<string, any> | null;
+  created_at: string;
+};
+
+export type EventDayOut = {
+  id: UUID;
+  event_id: UUID;
+  day: string;
+  start_time: string;
+  end_time: string;
+  slot_minutes: number;
+  break_start_time: string | null;
+  break_end_time: string | null;
+  label: string | null;
+};
+
+export type EventOut = {
+  id: UUID;
+  owner_user_id: UUID;
+  name: string;
+  location: string | null;
+  description: string | null;
+  starts_on: string;
+  ends_on: string;
+  default_slot_minutes: number;
+  slot_capacity: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  days: EventDayOut[];
+};
+
+export type AppointmentOut = {
+  id: UUID;
+  event_id: UUID;
+  customer_id: UUID;
+  deal_id: UUID | null;
+  assigned_user_id: UUID | null;
+  starts_at: string;
+  ends_at: string;
+  appointment_type: string;
+  status: string;
+  notes: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  deal_treatment_interest: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AttributionRow = { name: string; count: number };
+export type LostReasonRow = { reason: string; count: number };

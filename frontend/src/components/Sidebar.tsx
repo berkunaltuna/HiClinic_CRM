@@ -8,12 +8,15 @@ const NAV = [
   { href: "/pipeline", label: "Pipeline" },
   { href: "/contacts", label: "Contacts" },
   { href: "/tasks", label: "Tasks" },
+  { href: "/events", label: "Events" },
   { href: "/inbox", label: "Inbox" },
   { href: "/analytics", label: "Analytics" },
   { href: "/templates", label: "Templates" },
   { href: "/tags", label: "Tags" },
   { href: "/workflows", label: "Workflows" },
   { href: "/outbox", label: "Outbox" },
+  { href: "/activity", label: "Activity" },
+  { href: "/users", label: "Users" },
 ];
 
 type SidebarProps = {

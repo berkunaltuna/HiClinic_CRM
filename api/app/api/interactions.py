@@ -11,6 +11,7 @@ from app.db.models import Customer, Interaction, User
 from app.db.session import get_db
 from app.core.config import settings
 from app.schemas.interaction import InteractionCreate, InteractionOut
+from app.services.audit import record_audit
 
 router = APIRouter(prefix="", tags=["interactions"])
 
@@ -44,6 +45,23 @@ def create_interaction(
         provider_message_id=payload.provider_message_id,
     )
     db.add(interaction)
+    db.flush()
+    action = "note.created" if (payload.subject or "").lower() == "internal note" else "interaction.created"
+    record_audit(
+        db,
+        actor=user,
+        action=action,
+        entity_type="customer",
+        entity_id=customer.id,
+        after={
+            "interaction_id": str(interaction.id),
+            "channel": interaction.channel,
+            "direction": interaction.direction,
+            "subject": interaction.subject,
+            "content": interaction.content,
+        },
+        metadata={"customer_id": str(customer.id), "customer_name": customer.name},
+    )
     db.commit()
     db.refresh(interaction)
     return interaction

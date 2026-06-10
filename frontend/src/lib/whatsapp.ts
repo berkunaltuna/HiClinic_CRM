@@ -16,6 +16,11 @@ export function normalisePhoneForWhatsApp(phone?: string | null): string | null 
     digits = digits.slice(2);
   }
 
+  // Common malformed UK format: 44079... -> 4479...
+  if (digits.startsWith("440")) {
+    digits = "44" + digits.slice(3);
+  }
+
   // Already international (44...)
   if (digits.startsWith("44")) {
     return digits;

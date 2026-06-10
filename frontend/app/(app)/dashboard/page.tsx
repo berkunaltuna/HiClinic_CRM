@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
-import type { InboxCustomerOut, KPIResponse, CustomerOut } from "@/lib/types";
+import type { AttributionRow, InboxCustomerOut, KPIResponse, CustomerOut, LostReasonRow } from "@/lib/types";
 import { Topbar } from "@/components/Topbar";
 import { fmtDateTime } from "@/lib/dates";
 import { useToast } from "@/components/Toast";
@@ -19,6 +19,8 @@ export default function DashboardPage() {
   const [kpi, setKpi] = useState<KPIResponse | null>(null);
   const [recent, setRecent] = useState<InboxCustomerOut[]>([]);
   const [followups, setFollowups] = useState<CustomerOut[]>([]);
+  const [ads, setAds] = useState<AttributionRow[]>([]);
+  const [lost, setLost] = useState<LostReasonRow[]>([]);
   const [busy, setBusy] = useState(true);
 
   const conversion = useMemo(() => {
@@ -32,15 +34,19 @@ export default function DashboardPage() {
     (async () => {
       setBusy(true);
       try {
-        const [k, r, f] = await Promise.all([
+        const [k, r, f, a, l] = await Promise.all([
           apiFetch<KPIResponse>("/analytics/summary"),
           apiFetch<InboxCustomerOut[]>("/inbox/customers?limit=12"),
           apiFetch<CustomerOut[]>("/followups"),
+          apiFetch<AttributionRow[]>("/analytics/lead-attribution?field=ad_name"),
+          apiFetch<LostReasonRow[]>("/analytics/lost-reasons"),
         ]);
         if (!mounted) return;
         setKpi(k);
         setRecent(r);
         setFollowups(f.slice(0, 10));
+        setAds(a.slice(0, 5));
+        setLost(l.slice(0, 5));
       } catch (err: any) {
         toast.push(err?.message || "Failed to load dashboard", "error");
       } finally {
@@ -135,6 +141,33 @@ export default function DashboardPage() {
                 </div>
               ))}
               {!conversion.length && <div className="muted">—</div>}
+            </div>
+          </div>
+
+
+          <div className="card">
+            <div className="cardHeader" style={{ fontWeight: 800 }}>Top adverts (30d)</div>
+            <div className="cardBody" style={{ display: "grid", gap: 8 }}>
+              {ads.map((a) => (
+                <div key={a.name} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <div className="muted">{a.name}</div>
+                  <div style={{ fontWeight: 800 }}>{a.count}</div>
+                </div>
+              ))}
+              {!ads.length && <div className="muted">—</div>}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="cardHeader" style={{ fontWeight: 800 }}>Lost reasons (30d)</div>
+            <div className="cardBody" style={{ display: "grid", gap: 8 }}>
+              {lost.map((r) => (
+                <div key={r.reason} style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <div className="muted">{r.reason}</div>
+                  <div style={{ fontWeight: 800 }}>{r.count}</div>
+                </div>
+              ))}
+              {!lost.length && <div className="muted">—</div>}
             </div>
           </div>
 

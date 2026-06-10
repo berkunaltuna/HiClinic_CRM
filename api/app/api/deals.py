@@ -10,6 +10,7 @@ from app.db.models import Customer, Deal, User
 from app.db.session import get_db
 from app.core.config import settings
 from app.schemas.deal import DealCreate, DealOut, DealUpdate
+from app.services.audit import record_audit
 
 router = APIRouter(prefix="", tags=["deals"])
 
@@ -48,8 +49,12 @@ def create_deal(
         treatment_interest=payload.treatment_interest,
         preferred_consultation_day=payload.preferred_consultation_day,
         seminar_preference=payload.seminar_preference,
+        event_id=payload.event_id,
+        lost_reason=payload.lost_reason,
     )
     db.add(deal)
+    db.flush()
+    record_audit(db, actor=user, action="deal.created", entity_type="deal", entity_id=deal.id, after={"customer_id": str(customer.id), "status": deal.status, "amount": float(deal.amount or 0)})
     db.commit()
     db.refresh(deal)
     return deal
@@ -73,10 +78,12 @@ def update_deal(
     user: User = Depends(get_current_user),
 ) -> DealOut:
     deal = _get_deal(db, deal_id, user)
+    before = {"status": deal.status, "amount": float(deal.amount or 0), "treatment_interest": deal.treatment_interest, "preferred_consultation_day": deal.preferred_consultation_day, "seminar_preference": deal.seminar_preference, "event_id": str(deal.event_id) if deal.event_id else None, "lost_reason": deal.lost_reason}
     data = payload.model_dump(exclude_unset=True)
     for key, value in data.items():
         setattr(deal, key, value)
     db.add(deal)
+    record_audit(db, actor=user, action="deal.updated", entity_type="deal", entity_id=deal.id, before=before, after={"status": deal.status, "amount": float(deal.amount or 0), "treatment_interest": deal.treatment_interest, "preferred_consultation_day": deal.preferred_consultation_day, "seminar_preference": deal.seminar_preference, "event_id": str(deal.event_id) if deal.event_id else None, "lost_reason": deal.lost_reason}, metadata={"customer_id": str(deal.customer_id)})
     db.commit()
     db.refresh(deal)
     return deal

@@ -40,6 +40,14 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
 
   const res = await fetch(`${API_URL}${path}`, { ...init, headers });
 
+  if (res.status === 401) {
+    clearToken();
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.replace(`/login?next=${next}`);
+    }
+  }
+
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new ApiError(text || `HTTP ${res.status}`, res.status, text);

@@ -7,7 +7,8 @@ from sqlalchemy import func, and_, exists, text
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
-from app.db.models import Customer, Interaction, OutboundMessage, OutcomeEvent, Template, User
+from app.core.config import settings
+from app.db.models import Customer, FacebookLeadEvent, Interaction, OutboundMessage, OutcomeEvent, Template, User
 from app.db.session import get_db
 from app.schemas.outcome import KPIResponse, LeadsByDayPoint, TemplateEffectivenessRow
 
@@ -35,28 +36,61 @@ def kpi_summary(
     end_dt = _dt(end, now)
     start_dt = _dt(start, end_dt - timedelta(days=30))
 
-    leads_created = (
-        db.query(func.count(Customer.id))
-        .filter(Customer.owner_user_id == user.id)
+    leads_query = db.query(func.count(Customer.id))
+    if not settings.share_customers_across_users:
+        leads_query = leads_query.filter(Customer.owner_user_id == user.id)
+    customer_leads_created = (
+        leads_query
         .filter(Customer.created_at >= start_dt)
         .filter(Customer.created_at < end_dt)
         .scalar()
         or 0
     )
+    fb_leads_query = db.query(func.count(FacebookLeadEvent.id))
+    if not settings.share_customers_across_users:
+        fb_leads_query = fb_leads_query.filter(FacebookLeadEvent.owner_user_id == user.id)
+    facebook_leads_created = (
+        fb_leads_query
+        .filter(FacebookLeadEvent.created_at >= start_dt)
+        .filter(FacebookLeadEvent.created_at < end_dt)
+        .scalar()
+        or 0
+    )
+    # Dashboard lead count should reflect real inbound lead submissions. If the
+    # same customer submits multiple forms, FacebookLeadEvent is the truer metric.
+    leads_created = max(int(customer_leads_created), int(facebook_leads_created))
 
-    inbound_received = (
-        db.query(func.count(Interaction.id))
-        .filter(Interaction.owner_user_id == user.id)
+    inbound_query = db.query(func.count(Interaction.id))
+    if not settings.share_customers_across_users:
+        inbound_query = inbound_query.filter(Interaction.owner_user_id == user.id)
+    interaction_inbound_received = (
+        inbound_query
         .filter(Interaction.direction == "inbound")
         .filter(Interaction.occurred_at >= start_dt)
         .filter(Interaction.occurred_at < end_dt)
         .scalar()
         or 0
     )
+    # Facebook/Make lead events are also inbound enquiries. Count them as a
+    # fallback so the dashboard still shows inbound activity even if an older
+    # ingest path did not create an Interaction row.
+    inbound_fb_query = db.query(func.count(FacebookLeadEvent.id))
+    if not settings.share_customers_across_users:
+        inbound_fb_query = inbound_fb_query.filter(FacebookLeadEvent.owner_user_id == user.id)
+    facebook_inbound_received = (
+        inbound_fb_query
+        .filter(FacebookLeadEvent.created_at >= start_dt)
+        .filter(FacebookLeadEvent.created_at < end_dt)
+        .scalar()
+        or 0
+    )
+    inbound_received = max(int(interaction_inbound_received), int(facebook_inbound_received))
 
+    outbound_query = db.query(func.count(OutboundMessage.id))
+    if not settings.share_customers_across_users:
+        outbound_query = outbound_query.filter(OutboundMessage.owner_user_id == user.id)
     outbound_sent = (
-        db.query(func.count(OutboundMessage.id))
-        .filter(OutboundMessage.owner_user_id == user.id)
+        outbound_query
         .filter(OutboundMessage.status == "sent")
         .filter(OutboundMessage.created_at >= start_dt)
         .filter(OutboundMessage.created_at < end_dt)
@@ -65,9 +99,11 @@ def kpi_summary(
     )
 
     # Outcome counts
+    outcome_query = db.query(OutcomeEvent.type, func.count(OutcomeEvent.id))
+    if not settings.share_customers_across_users:
+        outcome_query = outcome_query.filter(OutcomeEvent.owner_user_id == user.id)
     outcome_rows = (
-        db.query(OutcomeEvent.type, func.count(OutcomeEvent.id))
-        .filter(OutcomeEvent.owner_user_id == user.id)
+        outcome_query
         .filter(OutcomeEvent.occurred_at >= start_dt)
         .filter(OutcomeEvent.occurred_at < end_dt)
         .group_by(OutcomeEvent.type)
@@ -150,16 +186,32 @@ def leads_by_day(
     end_dt = _dt(end, now)
     start_dt = _dt(start, end_dt - timedelta(days=30))
 
-    rows = (
-        db.query(func.date(Customer.created_at).label("d"), func.count(Customer.id).label("c"))
-        .filter(Customer.owner_user_id == user.id)
-        .filter(Customer.created_at >= start_dt)
+    customer_q = db.query(func.date(Customer.created_at).label("d"), func.count(Customer.id).label("c"))
+    if not settings.share_customers_across_users:
+        customer_q = customer_q.filter(Customer.owner_user_id == user.id)
+    customer_rows = (
+        customer_q.filter(Customer.created_at >= start_dt)
         .filter(Customer.created_at < end_dt)
         .group_by(func.date(Customer.created_at))
-        .order_by(func.date(Customer.created_at))
         .all()
     )
-    return [LeadsByDayPoint(date=str(r.d), leads=int(r.c)) for r in rows]
+
+    fb_q = db.query(func.date(FacebookLeadEvent.created_at).label("d"), func.count(FacebookLeadEvent.id).label("c"))
+    if not settings.share_customers_across_users:
+        fb_q = fb_q.filter(FacebookLeadEvent.owner_user_id == user.id)
+    fb_rows = (
+        fb_q.filter(FacebookLeadEvent.created_at >= start_dt)
+        .filter(FacebookLeadEvent.created_at < end_dt)
+        .group_by(func.date(FacebookLeadEvent.created_at))
+        .all()
+    )
+
+    counts: dict[str, int] = {}
+    for r in customer_rows:
+        counts[str(r.d)] = max(counts.get(str(r.d), 0), int(r.c or 0))
+    for r in fb_rows:
+        counts[str(r.d)] = max(counts.get(str(r.d), 0), int(r.c or 0))
+    return [LeadsByDayPoint(date=d, leads=counts[d]) for d in sorted(counts)]
 
 
 @router.get("/templates", response_model=list[TemplateEffectivenessRow])
@@ -241,3 +293,57 @@ def template_effectiveness(
             )
         )
     return out
+
+
+@router.get("/lost-reasons")
+def lost_reasons(
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from app.db.models import Deal
+    now = datetime.now(timezone.utc)
+    end_dt = _dt(end, now)
+    start_dt = _dt(start, end_dt - timedelta(days=30))
+    q = db.query(Deal.lost_reason, func.count(Deal.id)).join(Customer, Customer.id == Deal.customer_id)
+    if not settings.share_customers_across_users:
+        q = q.filter(Deal.owner_user_id == user.id)
+    rows = (
+        q.filter(Deal.lost_reason.isnot(None))
+        .filter(Customer.updated_at >= start_dt)
+        .filter(Customer.updated_at < end_dt)
+        .group_by(Deal.lost_reason)
+        .order_by(func.count(Deal.id).desc())
+        .all()
+    )
+    return [{"reason": r or "Other", "count": int(c)} for r, c in rows]
+
+
+@router.get("/lead-attribution")
+def lead_attribution(
+    field: str = Query(default="ad_name"),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    allowed = {"lead_source", "form_name", "campaign_name", "adset_name", "ad_name"}
+    if field not in allowed:
+        field = "ad_name"
+    now = datetime.now(timezone.utc)
+    end_dt = _dt(end, now)
+    start_dt = _dt(start, end_dt - timedelta(days=30))
+    col = getattr(Customer, field)
+    q = db.query(col.label("name"), func.count(Customer.id).label("count"))
+    if not settings.share_customers_across_users:
+        q = q.filter(Customer.owner_user_id == user.id)
+    rows = (
+        q.filter(Customer.created_at >= start_dt)
+        .filter(Customer.created_at < end_dt)
+        .group_by(col)
+        .order_by(func.count(Customer.id).desc())
+        .limit(50)
+        .all()
+    )
+    return [{"name": r.name or "Unknown", "count": int(r.count)} for r in rows]

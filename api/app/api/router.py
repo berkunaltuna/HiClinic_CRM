@@ -20,6 +20,9 @@ from app.api import (
     inbox,
     outcomes,
     analytics,
+    users,
+    audit,
+    events,
 )
 
 api_router = APIRouter()
@@ -45,3 +48,8 @@ api_router.include_router(tags.router)
 api_router.include_router(inbox.router)
 api_router.include_router(outcomes.router)
 api_router.include_router(analytics.router)
+
+# Phase 7 users/activity/events
+api_router.include_router(users.router)
+api_router.include_router(audit.router)
+api_router.include_router(events.router)

@@ -45,6 +45,8 @@ class Settings:
         if o.strip()
     ]
 
+    frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
+
     # Lead visibility
     # False = legacy per-owner isolation (keeps tests/back-compat)
     # True  = shared CRM workspace where all authenticated users can view/work all leads.

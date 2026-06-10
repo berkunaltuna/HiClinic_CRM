@@ -60,8 +60,9 @@ export default function LoginPage() {
           {busy ? "Signing in…" : "Sign in"}
         </button>
 
-        <div className="muted" style={{ fontSize: 13 }}>
-          New here? <Link href="/register">Create an account</Link>
+        <div className="muted" style={{ fontSize: 13, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+          <span>New here? <Link href="/register">Create an account</Link></span>
+          <Link href="/forgot-password">Forgot your password?</Link>
         </div>
       </form>
     </main>

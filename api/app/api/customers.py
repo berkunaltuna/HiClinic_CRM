@@ -11,6 +11,7 @@ from app.db.models import Customer, CustomerTag, Deal, OutboundMessage, Facebook
 from app.db.session import get_db
 from app.core.config import settings
 from app.schemas.customer import CustomerCreate, CustomerOut, CustomerUpdate
+from app.services.audit import record_audit
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
@@ -39,8 +40,19 @@ def create_customer(
         next_follow_up_at=payload.next_follow_up_at,
         can_contact=payload.can_contact,
         language=payload.language,
+        lead_source=payload.lead_source,
+        form_id=payload.form_id,
+        form_name=payload.form_name,
+        campaign_id=payload.campaign_id,
+        campaign_name=payload.campaign_name,
+        adset_id=payload.adset_id,
+        adset_name=payload.adset_name,
+        ad_id=payload.ad_id,
+        ad_name=payload.ad_name,
     )
     db.add(customer)
+    db.flush()
+    record_audit(db, actor=user, action="customer.created", entity_type="customer", entity_id=customer.id, after={"name": customer.name, "email": customer.email, "phone": customer.phone})
     db.commit()
     db.refresh(customer)
     return customer
@@ -75,6 +87,7 @@ def update_customer(
 ) -> CustomerOut:
     customer = _get_customer(db, customer_id, user)
 
+    before = {"name": customer.name, "email": customer.email, "phone": customer.phone, "stage": customer.stage, "lead_source": customer.lead_source, "form_name": customer.form_name, "campaign_name": customer.campaign_name, "adset_name": customer.adset_name, "ad_name": customer.ad_name}
     data = payload.model_dump(exclude_unset=True)
     for key, value in data.items():
         if key == "email" and value is not None:
@@ -83,6 +96,7 @@ def update_customer(
     customer.updated_at = datetime.now(tz=timezone.utc)
 
     db.add(customer)
+    record_audit(db, actor=user, action="customer.updated", entity_type="customer", entity_id=customer.id, before=before, after={"name": customer.name, "email": customer.email, "phone": customer.phone, "stage": customer.stage, "lead_source": customer.lead_source, "form_name": customer.form_name, "campaign_name": customer.campaign_name, "adset_name": customer.adset_name, "ad_name": customer.ad_name})
     db.commit()
     db.refresh(customer)
     return customer
@@ -112,6 +126,8 @@ def delete_customer(
     db.query(OutboundMessage).filter(OutboundMessage.customer_id == customer.id).delete(synchronize_session=False)
     db.query(OutcomeEvent).filter(OutcomeEvent.customer_id == customer.id).delete(synchronize_session=False)
 
+    before = {"name": customer.name, "email": customer.email, "phone": customer.phone}
     db.delete(customer)
+    record_audit(db, actor=user, action="customer.deleted", entity_type="customer", entity_id=customer_id, before=before)
     db.commit()
     return Response(status_code=204)
