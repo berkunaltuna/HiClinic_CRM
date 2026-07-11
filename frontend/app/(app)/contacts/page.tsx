@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Topbar } from "@/components/Topbar";
 import { apiFetch } from "@/lib/api";
@@ -18,6 +18,10 @@ export default function ContactsPage() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [company, setCompany] = useState("");
+
+  const [q, setQ] = useState("");
+  const [dateDir, setDateDir] = useState<"oldest" | "newest">("newest");
+  const [alphabetical, setAlphabetical] = useState(false);
 
   async function load() {
     setBusy(true);
@@ -59,6 +63,26 @@ export default function ContactsPage() {
     }
   }
 
+  const visibleItems = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    let list = items;
+    if (query) {
+      list = list.filter((c) => {
+        const haystack = [c.name, c.email, c.phone, c.company, c.stage, c.latest_deal?.treatment_interest, ...(c.tag_names || [])]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(query);
+      });
+    }
+    const sorter = alphabetical
+      ? (a: CustomerOut, b: CustomerOut) => a.name.localeCompare(b.name)
+      : dateDir === "oldest"
+        ? (a: CustomerOut, b: CustomerOut) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        : (a: CustomerOut, b: CustomerOut) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    return list.slice().sort(sorter);
+  }, [items, q, dateDir, alphabetical]);
+
   async function deleteContact(id: string, label: string) {
     if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
     try {
@@ -78,6 +102,32 @@ export default function ContactsPage() {
         <section className="card">
           <div className="cardHeader" style={{ fontWeight: 900 }}>All contacts</div>
           <div className="cardBody">
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+              <input
+                placeholder="Search name, email, phone, company…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                style={{ flex: 1, minWidth: 200 }}
+              />
+              <button
+                type="button"
+                className="btn"
+                style={alphabetical ? { opacity: 0.55 } : undefined}
+                title="Toggle sort direction"
+                onClick={() => { setAlphabetical(false); setDateDir((d) => (d === "oldest" ? "newest" : "oldest")); }}
+              >
+                {dateDir === "oldest" ? "↑ Oldest first" : "↓ Newest first"}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                style={alphabetical ? { background: "var(--primary)", color: "#fff", borderColor: "var(--primary)" } : undefined}
+                title="Toggle alphabetical sort"
+                onClick={() => setAlphabetical((a) => !a)}
+              >
+                A–Z
+              </button>
+            </div>
             <table className="table">
               <thead>
                 <tr>
@@ -90,7 +140,7 @@ export default function ContactsPage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((c) => (
+                {visibleItems.map((c) => (
                   <tr key={c.id}>
                     <td>
                       <Link href={`/contacts/${c.id}`} style={{ fontWeight: 800 }}>{c.name}</Link>
@@ -118,6 +168,11 @@ export default function ContactsPage() {
                 {!busy && !items.length && (
                   <tr>
                     <td colSpan={6} className="muted">No contacts yet.</td>
+                  </tr>
+                )}
+                {!busy && items.length > 0 && !visibleItems.length && (
+                  <tr>
+                    <td colSpan={6} className="muted">No contacts match your search.</td>
                   </tr>
                 )}
               </tbody>

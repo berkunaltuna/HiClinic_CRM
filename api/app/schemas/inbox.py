@@ -17,6 +17,7 @@ class InboxCustomerOut(BaseModel):
     stage: str
     tags: list[str] = Field(default_factory=list)
     next_follow_up_at: datetime | None = None
+    created_at: datetime
 
     last_inbound_at: datetime | None = None
     last_outbound_at: datetime | None = None
@@ -24,6 +25,7 @@ class InboxCustomerOut(BaseModel):
     last_activity_direction: str | None = None
     bucket: str
     latest_deal: DealOut | None = None
+    owner_email: str | None = None
 
     lead_source: str | None = None
     form_id: str | None = None

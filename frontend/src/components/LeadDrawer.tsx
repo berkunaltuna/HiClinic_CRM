@@ -5,7 +5,7 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import type { AuditLogOut, InboxCustomerOut, ThreadItem, TemplateOut } from "@/lib/types";
 import { fmtDateTime } from "@/lib/dates";
-import { PIPELINE_STAGES, SERVICE_TAGS, stageLabel } from "@/lib/constants";
+import { PIPELINE_STAGES, SERVICE_TAGS, stageLabel, sourceMeta, ownerInitials } from "@/lib/constants";
 import { useToast } from "@/components/Toast";
 import { WhatsAppQuickAction } from "@/components/WhatsAppQuickAction";
 
@@ -35,10 +35,14 @@ export function LeadDrawer({
     adset_name: lead.adset_name || "",
     ad_name: lead.ad_name || "",
   });
+  const [depositAmount, setDepositAmount] = useState(() => (lead.latest_deal?.amount != null ? String(lead.latest_deal.amount) : ""));
+  const [quoteAmount, setQuoteAmount] = useState(() => (lead.latest_deal?.quote_amount != null ? String(lead.latest_deal.quote_amount) : ""));
 
   const selectedService = useMemo(() => {
     return SERVICE_TAGS.find((t) => (lead.tags || []).includes(t)) || "";
   }, [lead.tags]);
+
+  const src = sourceMeta(lead.lead_source);
 
   useEffect(() => {
     setAttribution({
@@ -48,6 +52,8 @@ export function LeadDrawer({
       adset_name: lead.adset_name || "",
       ad_name: lead.ad_name || "",
     });
+    setDepositAmount(lead.latest_deal?.amount != null ? String(lead.latest_deal.amount) : "");
+    setQuoteAmount(lead.latest_deal?.quote_amount != null ? String(lead.latest_deal.quote_amount) : "");
     let mounted = true;
     (async () => {
       try {
@@ -128,6 +134,15 @@ export function LeadDrawer({
     }
   }
 
+  async function refreshActivity() {
+    const [items, activityItems] = await Promise.all([
+      apiFetch<ThreadItem[]>(`/inbox/customers/${lead.id}/thread`),
+      apiFetch<AuditLogOut[]>(`/inbox/customers/${lead.id}/activity`).catch(() => [] as AuditLogOut[]),
+    ]);
+    setThread(items);
+    setActivity(activityItems);
+  }
+
   async function addNote() {
     const body = note.trim();
     if (!body) return;
@@ -145,12 +160,7 @@ export function LeadDrawer({
       });
       setNote("");
       toast.push("Note added");
-      const [items, activityItems] = await Promise.all([
-        apiFetch<ThreadItem[]>(`/inbox/customers/${lead.id}/thread`),
-        apiFetch<AuditLogOut[]>(`/inbox/customers/${lead.id}/activity`).catch(() => [] as AuditLogOut[]),
-      ]);
-      setThread(items);
-      setActivity(activityItems);
+      await refreshActivity();
       onUpdated();
     } catch (err: any) {
       toast.push(err?.message || "Failed to add note", "error");
@@ -222,15 +232,86 @@ export function LeadDrawer({
     setAttribution((prev) => ({ ...prev, [key]: value }));
   }
 
+  async function saveDeposit() {
+    const amount = parseFloat(depositAmount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      toast.push("Enter a valid deposit amount", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (lead.latest_deal?.id) {
+        await apiFetch(`/deals/${lead.latest_deal.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ amount }),
+        });
+      } else {
+        await apiFetch(`/customers/${lead.id}/deals`, {
+          method: "POST",
+          body: JSON.stringify({ amount }),
+        });
+      }
+      toast.push("Deposit amount saved");
+      await refreshActivity();
+      onUpdated();
+    } catch (err: any) {
+      toast.push(err?.message || "Failed to save deposit amount", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveQuote() {
+    const quote = parseFloat(quoteAmount);
+    if (!Number.isFinite(quote) || quote < 0) {
+      toast.push("Enter a valid quote amount", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (lead.latest_deal?.id) {
+        await apiFetch(`/deals/${lead.latest_deal.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ quote_amount: quote }),
+        });
+      } else {
+        await apiFetch(`/customers/${lead.id}/deals`, {
+          method: "POST",
+          body: JSON.stringify({ amount: 0, quote_amount: quote }),
+        });
+      }
+      toast.push("Quote saved");
+      await refreshActivity();
+      onUpdated();
+    } catch (err: any) {
+      toast.push(err?.message || "Failed to save quote", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
 
   return (
     <>
       <div className="drawerOverlay" onClick={onClose} />
       <aside className="drawer" role="dialog" aria-modal="true">
-        <div className="drawerHeader">
-          <div>
+        <div className="drawerHeader" style={{ alignItems: "flex-start" }}>
+          <span
+            className="ownerAvatar"
+            title={lead.owner_email || undefined}
+            style={{ width: 42, height: 42, borderRadius: 12, fontSize: 14, background: "rgba(30,103,150,0.12)", color: "var(--primary)" }}
+          >
+            {ownerInitials(lead.owner_email)}
+          </span>
+          <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 900, fontSize: 16 }}>{lead.name}</div>
-            <div className="muted" style={{ fontSize: 12 }}>{lead.company || "—"}</div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{lead.company || "—"}</div>
+            <div style={{ marginTop: 6 }}>
+              <span className="sourceBadge" style={{ background: `${src.color}1f`, color: src.color }}>
+                <span className="sourceDot" style={{ background: src.color }} />
+                {src.label}
+              </span>
+            </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Link className="btn" href={`/contacts/${lead.id}`}>Open</Link>
@@ -269,6 +350,44 @@ export function LeadDrawer({
                   <button className="btn" disabled={busy} onClick={() => setFollowupMinutes(null)}>Clear</button>
                 </div>
                 <div className="muted" style={{ fontSize: 12 }}>Current: {fmtDateTime(lead.next_follow_up_at)}</div>
+              </div>
+
+              <div style={{ display: "grid", gap: 6 }}>
+                <div className="muted" style={{ fontSize: 12 }}>Deposit amount (EUR)</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={depositAmount}
+                    onChange={(e) => setDepositAmount(e.target.value)}
+                    placeholder="0.00"
+                    style={{ flex: 1 }}
+                  />
+                  <button className="btn" disabled={busy || !depositAmount.trim()} onClick={saveDeposit}>Save</button>
+                </div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Current: {lead.latest_deal?.amount ? `€${Number(lead.latest_deal.amount).toLocaleString("en-US")}` : "Not set"}
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gap: 6 }}>
+                <div className="muted" style={{ fontSize: 12 }}>Full quote (EUR)</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={quoteAmount}
+                    onChange={(e) => setQuoteAmount(e.target.value)}
+                    placeholder="0.00"
+                    style={{ flex: 1 }}
+                  />
+                  <button className="btn" disabled={busy || !quoteAmount.trim()} onClick={saveQuote}>Save</button>
+                </div>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Current: {lead.latest_deal?.quote_amount ? `€${Number(lead.latest_deal.quote_amount).toLocaleString("en-US")}` : "Not set"}
+                </div>
               </div>
             </div>
           </div>
@@ -378,6 +497,14 @@ export function LeadDrawer({
                     {a.after?.stage && <div className="muted" style={{ marginTop: 4 }}>Stage: {stageLabel(String(a.before?.stage || "—"))} → {stageLabel(String(a.after.stage))}</div>}
                     {a.after?.tag && <div className="muted" style={{ marginTop: 4 }}>Tag added: {String(a.after.tag)}</div>}
                     {a.before?.tag && <div className="muted" style={{ marginTop: 4 }}>Tag removed: {String(a.before.tag)}</div>}
+                    {a.action === "deal.updated" && a.before?.quote_amount !== a.after?.quote_amount && (
+                      <div className="muted" style={{ marginTop: 4 }}>
+                        Quote: {a.before?.quote_amount != null ? `€${Number(a.before.quote_amount).toLocaleString("en-US")}` : "—"} → {a.after?.quote_amount != null ? `€${Number(a.after.quote_amount).toLocaleString("en-US")}` : "—"}
+                      </div>
+                    )}
+                    {a.action === "deal.created" && a.after?.quote_amount != null && (
+                      <div className="muted" style={{ marginTop: 4 }}>Quote set: €{Number(a.after.quote_amount).toLocaleString("en-US")}</div>
+                    )}
                   </div>
                 ))
               ) : (

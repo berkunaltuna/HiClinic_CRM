@@ -267,6 +267,9 @@ input:focus, select:focus, textarea:focus {
   border-radius: 14px;
   padding: 10px 10px;
   cursor: pointer;
+  overflow: hidden;
+  min-width: 0;
+  word-break: break-word;
 }
 
 .cardMini:hover { box-shadow: var(--shadow); }
@@ -318,68 +321,11 @@ input:focus, select:focus, textarea:focus {
 
 
 .kanban { align-items: start; }
-.kanbanCol { display: grid; grid-template-rows: auto 1fr; min-height: 72vh; max-height: 78vh; min-width: 0; }
-.kanbanCards { padding: 10px; display: grid; gap: 10px; overflow-y: auto; min-height: 140px; }
+.kanbanCol { display: grid; grid-template-rows: auto 1fr; min-height: 72vh; max-height: 78vh; min-width: 0; overflow: hidden; }
+.kanbanCards { padding: 10px; display: grid; gap: 10px; overflow-y: auto; overflow-x: hidden; min-height: 140px; }
 .kanbanDropActive { background: rgba(30,103,150,0.04); }
 .cardMiniDragging { opacity: .55; }
 
-
-/* Pipeline fit polish: keep all stages visible in one desktop window */
-.kanban {
-  grid-template-columns: repeat(9, minmax(92px, 1fr));
-  gap: 6px;
-  width: 100%;
-  overflow-x: hidden;
-}
-.kanbanCol {
-  min-width: 0;
-  border-radius: 12px;
-}
-.kanbanColHeader {
-  padding: 7px 6px;
-  gap: 4px;
-  font-size: 11px;
-  line-height: 1.15;
-  align-items: flex-start;
-}
-.kanbanColHeader .chip {
-  padding: 3px 5px;
-  font-size: 10px;
-  white-space: nowrap;
-}
-.kanbanCards {
-  padding: 6px;
-  gap: 6px;
-}
-.cardMini {
-  padding: 7px;
-  border-radius: 10px;
-  font-size: 11px;
-}
-.cardMini .chip,
-.cardMini .badge {
-  padding: 3px 5px;
-  font-size: 10px;
-  line-height: 1.1;
-}
-.cardMini .muted {
-  font-size: 10px !important;
-}
-.cardMini input[type="checkbox"] {
-  width: 13px;
-  height: 13px;
-}
-@media (max-width: 1180px) {
-  .kanban {
-    grid-template-columns: repeat(3, minmax(180px, 1fr));
-    overflow-x: visible;
-  }
-}
-@media (max-width: 760px) {
-  .kanban {
-    grid-template-columns: 1fr;
-  }
-}
 
 /* Pipeline view modes: scoped so shared chips elsewhere are untouched */
 .pipelineViewToggle {
@@ -406,36 +352,17 @@ input:focus, select:focus, textarea:focus {
   color: white;
 }
 .kanban.kanban-fit {
-  display: grid;
-  grid-template-columns: repeat(9, minmax(112px, 1fr));
-  gap: 8px;
-  width: 100%;
-  overflow-x: hidden;
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 10px;
+  align-items: stretch;
 }
 .kanban.kanban-fit .kanbanCol {
-  min-width: 0;
-}
-.kanban.kanban-fit .kanbanColHeader {
-  padding: 8px 7px;
-  font-size: 11px;
-}
-.kanban.kanban-fit .kanbanCards {
-  padding: 7px;
-  gap: 7px;
-}
-.kanban.kanban-fit .cardMini {
-  padding: 8px;
-  font-size: 11px;
-}
-.kanban.kanban-fit .cardMini .chip,
-.kanban.kanban-fit .cardMini .badge,
-.kanban.kanban-fit .kanbanColHeader .chip {
-  padding: 3px 5px;
-  font-size: 10px;
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex: 0 0 250px;
+  width: 250px;
+  max-width: 250px;
 }
 .kanban.kanban-comfortable {
   display: flex;
@@ -463,12 +390,6 @@ input:focus, select:focus, textarea:focus {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-@media (max-width: 1180px) {
-  .kanban.kanban-fit {
-    grid-template-columns: repeat(3, minmax(180px, 1fr));
-    overflow-x: visible;
-  }
-}
 @media (max-width: 760px) {
   .kanban.kanban-fit,
   .kanban.kanban-comfortable {
@@ -476,9 +397,206 @@ input:focus, select:focus, textarea:focus {
     grid-template-columns: 1fr;
     overflow-x: visible;
   }
+  .kanban.kanban-fit .kanbanCol,
   .kanban.kanban-comfortable .kanbanCol {
     width: auto;
     max-width: none;
     flex-basis: auto;
   }
+}
+
+/* Pipeline redesign: stage accent, card variants, badges, collapsible columns */
+.stageAccentBar {
+  width: 3px;
+  height: 15px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.cardMini {
+  position: relative;
+}
+
+.cardAccentBar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+}
+
+.cardStyle-accent.cardMini {
+  padding-left: 15px;
+}
+
+.countryBadge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 1px 5px;
+  border-radius: 5px;
+  letter-spacing: 0.02em;
+  flex: none;
+}
+
+.serviceBadge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #eef1f4;
+  padding: 2px 7px;
+  border-radius: 6px;
+  margin-top: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sourceBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 6px;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sourceBadge.sourceBadge-minimal {
+  background: transparent;
+  padding: 0;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.sourceDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  flex: none;
+}
+
+.ownerAvatar {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 99px;
+  font-size: 9.5px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.chipWarn {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #b45309;
+  background: #fef3c7;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+
+.chipValue {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #047857;
+  background: #d1fae5;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+
+.chipQuote {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #4338ca;
+  background: #e0e7ff;
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+
+.selCountBadge {
+  display: inline-flex;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 99px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.kanbanColHeader .kanbanCollapseBtn {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border: none;
+  background: transparent;
+  color: #c2cad4;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 5px;
+}
+
+.kanbanColHeader .kanbanCollapseBtn:hover {
+  background: rgba(148, 163, 184, 0.15);
+}
+
+.kanbanRail {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 12px 0;
+  cursor: pointer;
+  background: #fff;
+}
+
+.kanbanRail:hover {
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.kanbanRailCount {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 99px;
+}
+
+.kanbanRailLabel {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-weight: 700;
+  font-size: 12px;
+  color: #94a3b8;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.kanban-comfortable .kanbanCol.kanbanColCollapsed,
+.kanban-fit .kanbanCol.kanbanColCollapsed {
+  flex: 0 0 46px;
+  width: 46px;
+  max-width: 46px;
+}
+
+.kanbanCol.kanbanColCollapsed {
+  display: flex !important;
 }

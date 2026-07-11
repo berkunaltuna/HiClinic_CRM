@@ -18,6 +18,7 @@ export type CustomerOut = {
   phone: string | null;
   company: string | null;
   next_follow_up_at: string | null;
+  created_at: string;
   can_contact: boolean;
   language: string | null;
   stage: string;
@@ -43,12 +44,14 @@ export type InboxCustomerOut = {
   stage: string;
   tags: string[];
   next_follow_up_at: string | null;
+  created_at: string;
   last_inbound_at: string | null;
   last_outbound_at: string | null;
   last_activity_at: string | null;
   last_activity_direction: string | null;
   bucket: "followup_due" | "open" | "waiting" | "closed" | string;
   latest_deal: DealOut | null;
+  owner_email: string | null;
   lead_source: string | null;
   form_id: string | null;
   form_name: string | null;
@@ -76,6 +79,7 @@ export type DealOut = {
   id: UUID;
   customer_id: UUID;
   amount: string;
+  quote_amount: number | null;
   status: string;
   treatment_interest: string | null;
   preferred_consultation_day: string | null;

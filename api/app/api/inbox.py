@@ -5,10 +5,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.auth.deps import get_current_user
-from app.db.models import AuditLog, Customer, Deal, Interaction, OutboundMessage, Tag, CustomerTag, User
+from app.db.models import AuditLog, Appointment, Customer, Deal, Interaction, OutboundMessage, Tag, CustomerTag, User
 from app.db.session import get_db
 from app.core.config import settings
 from app.schemas.audit import AuditLogOut
@@ -87,13 +87,15 @@ def list_inbox_customers(
         .subquery()
     )
 
-    cq = db.query(Customer)
+    cq = db.query(Customer).options(joinedload(Customer.owner))
     if not settings.share_customers_across_users:
         cq = cq.filter(Customer.owner_user_id == user.id)
     if stage:
         cq = cq.filter(Customer.stage == stage)
     if event_id:
-        cq = cq.join(Deal, Deal.customer_id == Customer.id).filter(Deal.event_id == event_id)
+        deal_customer_ids = db.query(Deal.customer_id).filter(Deal.event_id == event_id)
+        appt_customer_ids = db.query(Appointment.customer_id).filter(Appointment.event_id == event_id)
+        cq = cq.filter(Customer.id.in_(deal_customer_ids.union(appt_customer_ids)))
     if q:
         like = f"%{q}%"
         cq = cq.filter(or_(Customer.name.ilike(like), Customer.phone.ilike(like), Customer.email.ilike(like), Customer.company.ilike(like)))
@@ -135,12 +137,14 @@ def list_inbox_customers(
                 stage=c.stage,
                 tags=c.tag_names,
                 next_follow_up_at=c.next_follow_up_at,
+                created_at=c.created_at,
                 last_inbound_at=li,
                 last_outbound_at=lo,
                 last_activity_at=last_activity_at,
                 last_activity_direction=last_activity_direction,
                 bucket=b,
                 latest_deal=c.latest_deal,
+                owner_email=c.owner.email if c.owner else None,
                 lead_source=c.lead_source,
                 form_id=c.form_id,
                 form_name=c.form_name,

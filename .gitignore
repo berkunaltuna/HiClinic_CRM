@@ -1,29 +1,12 @@
 # Phase 4: secret management (DO NOT commit your real secrets)
 .env
-
 # Python / OS noise
 __pycache__/
 *.pyc
 .DS_Store
-<<<<<<< HEAD
-frontend/node_modules__pycache__/
-*.pyc
-.env
-
-# Python
-__pycache__/
-*.pyc
-
-# Env
-.env
-
 # Next.js
 frontend/.next/
 frontend/node_modules/
 node_modules/
-
-# OS
-.DS_Store
-=======
-frontend/node_modules
->>>>>>> parent of 9dd6501 (Ignore pycache and environment files)
+# Claude Code local config
+.claude

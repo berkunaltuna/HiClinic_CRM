@@ -141,6 +141,7 @@ class Deal(Base):
     )
 
     amount = sa.Column(sa.Numeric(12, 2), nullable=False, server_default="0")
+    quote_amount = sa.Column(sa.Numeric(12, 2), nullable=True)
 
     # Lead form answers mapped from Meta/Facebook Lead Ads. Kept on the deal
     # because one customer can enquire about multiple treatments over time.

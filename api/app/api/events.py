@@ -199,9 +199,15 @@ def create_appointment(event_id: UUID, payload: AppointmentCreate, db: Session =
         raise HTTPException(status_code=404, detail="Deal not found")
     _check_appointment(event, payload, db)
     deal = db.get(Deal, payload.deal_id) if payload.deal_id else customer.latest_deal
-    appt = Appointment(event_id=event.id, customer_id=customer.id, deal_id=(deal.id if deal is not None else None), assigned_user_id=payload.assigned_user_id or user.id, starts_at=payload.starts_at, ends_at=payload.ends_at, appointment_type=payload.appointment_type, status=payload.status, notes=payload.notes)
-    if deal is not None:
-        deal.event_id = event.id
+    if deal is None:
+        # Every booked customer needs a deal so the pipeline's event filter
+        # (which matches on Deal.event_id) and the "Event assigned" badge pick them up.
+        deal = Deal(customer_id=customer.id, owner_user_id=user.id, amount=0, status="open")
+        db.add(deal)
+        db.flush()
+        record_audit(db, actor=user, action="deal.created", entity_type="deal", entity_id=deal.id, after={"customer_id": str(customer.id), "status": deal.status, "amount": 0.0})
+    deal.event_id = event.id
+    appt = Appointment(event_id=event.id, customer_id=customer.id, deal_id=deal.id, assigned_user_id=payload.assigned_user_id or user.id, starts_at=payload.starts_at, ends_at=payload.ends_at, appointment_type=payload.appointment_type, status=payload.status, notes=payload.notes)
     customer.stage = "appointment_booked"
     db.add(appt)
     record_audit(db, actor=user, action="appointment.created", entity_type="appointment", entity_id=appt.id, after={"customer_id": str(customer.id), "event_id": str(event.id), "starts_at": payload.starts_at.isoformat()})

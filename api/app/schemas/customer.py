@@ -63,6 +63,7 @@ class CustomerOut(BaseModel):
     phone: str | None
     company: str | None
     next_follow_up_at: datetime | None
+    created_at: datetime
 
     # Phase 3 additions
     can_contact: bool

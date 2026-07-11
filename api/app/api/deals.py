@@ -45,6 +45,7 @@ def create_deal(
         customer_id=customer.id,
         owner_user_id=user.id,
         amount=payload.amount,
+        quote_amount=payload.quote_amount,
         status=payload.status,
         treatment_interest=payload.treatment_interest,
         preferred_consultation_day=payload.preferred_consultation_day,
@@ -54,7 +55,7 @@ def create_deal(
     )
     db.add(deal)
     db.flush()
-    record_audit(db, actor=user, action="deal.created", entity_type="deal", entity_id=deal.id, after={"customer_id": str(customer.id), "status": deal.status, "amount": float(deal.amount or 0)})
+    record_audit(db, actor=user, action="deal.created", entity_type="deal", entity_id=deal.id, after={"customer_id": str(customer.id), "status": deal.status, "amount": float(deal.amount or 0), "quote_amount": float(deal.quote_amount) if deal.quote_amount is not None else None})
     db.commit()
     db.refresh(deal)
     return deal
@@ -78,12 +79,13 @@ def update_deal(
     user: User = Depends(get_current_user),
 ) -> DealOut:
     deal = _get_deal(db, deal_id, user)
-    before = {"status": deal.status, "amount": float(deal.amount or 0), "treatment_interest": deal.treatment_interest, "preferred_consultation_day": deal.preferred_consultation_day, "seminar_preference": deal.seminar_preference, "event_id": str(deal.event_id) if deal.event_id else None, "lost_reason": deal.lost_reason}
+    before = {"status": deal.status, "amount": float(deal.amount or 0), "quote_amount": float(deal.quote_amount) if deal.quote_amount is not None else None, "treatment_interest": deal.treatment_interest, "preferred_consultation_day": deal.preferred_consultation_day, "seminar_preference": deal.seminar_preference, "event_id": str(deal.event_id) if deal.event_id else None, "lost_reason": deal.lost_reason}
     data = payload.model_dump(exclude_unset=True)
     for key, value in data.items():
         setattr(deal, key, value)
     db.add(deal)
-    record_audit(db, actor=user, action="deal.updated", entity_type="deal", entity_id=deal.id, before=before, after={"status": deal.status, "amount": float(deal.amount or 0), "treatment_interest": deal.treatment_interest, "preferred_consultation_day": deal.preferred_consultation_day, "seminar_preference": deal.seminar_preference, "event_id": str(deal.event_id) if deal.event_id else None, "lost_reason": deal.lost_reason}, metadata={"customer_id": str(deal.customer_id)})
+    after = {"status": deal.status, "amount": float(deal.amount or 0), "quote_amount": float(deal.quote_amount) if deal.quote_amount is not None else None, "treatment_interest": deal.treatment_interest, "preferred_consultation_day": deal.preferred_consultation_day, "seminar_preference": deal.seminar_preference, "event_id": str(deal.event_id) if deal.event_id else None, "lost_reason": deal.lost_reason}
+    record_audit(db, actor=user, action="deal.updated", entity_type="deal", entity_id=deal.id, before=before, after=after, metadata={"customer_id": str(deal.customer_id)})
     db.commit()
     db.refresh(deal)
     return deal
