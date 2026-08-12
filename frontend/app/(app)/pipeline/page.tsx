@@ -381,6 +381,7 @@ export default function PipelinePage() {
                     <div
                       key={l.id}
                       className={`cardMini cardStyle-${cardStyle} ${draggingId === l.id ? "cardMiniDragging" : ""}`}
+                      data-density={cardStyle}
                       draggable
                       onDragStart={(e) => { e.dataTransfer.setData("text/plain", l.id); e.dataTransfer.effectAllowed = "move"; setDraggingId(l.id); }}
                       onDragEnd={() => setDraggingId(null)}

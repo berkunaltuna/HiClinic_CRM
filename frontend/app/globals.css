@@ -230,22 +230,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 /* Kanban */
-.kanban {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 10px;
-  overflow-x: visible;
-  padding-bottom: 8px;
-}
-
-@media (max-width: 1280px) {
-  .kanban { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-  .kanbanColHeader { padding: 8px 9px; }
-  .cardMini { padding: 8px; }
-}
-
 .kanbanCol {
-  min-height: 60vh;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: rgba(255,255,255,0.55);
@@ -257,9 +242,9 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
 }
-
-.kanbanCards { padding: 10px; display: grid; gap: 10px; }
 
 .cardMini {
   background: var(--surface);
@@ -267,10 +252,15 @@ input:focus, select:focus, textarea:focus {
   border-radius: 14px;
   padding: 10px 10px;
   cursor: pointer;
-  overflow: hidden;
+  overflow: visible;
   min-width: 0;
+  flex: 0 0 auto;
   word-break: break-word;
 }
+
+.cardMini[data-density="minimal"] { min-height: 56px; }
+.cardMini[data-density="detailed"] { min-height: 180px; }
+.cardMini[data-density="accent"] { min-height: 180px; }
 
 .cardMini:hover { box-shadow: var(--shadow); }
 
@@ -320,9 +310,44 @@ input:focus, select:focus, textarea:focus {
 
 
 
-.kanban { align-items: start; }
-.kanbanCol { display: grid; grid-template-rows: auto 1fr; min-height: 72vh; max-height: 78vh; min-width: 0; overflow: hidden; }
-.kanbanCards { padding: 10px; display: grid; gap: 10px; overflow-y: auto; overflow-x: hidden; min-height: 140px; }
+/* Kanban board: always horizontally scrollable, columns never shrink below
+   their target width. The board itself is the only thing that scrolls
+   sideways — the filter bar above it is a separate block and is unaffected. */
+.kanban {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 4px 16px;
+}
+.kanbanCol {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  flex: 0 0 auto;
+  min-height: 60vh;
+  max-height: 78vh;
+  min-width: 0;
+  overflow: hidden;
+}
+/* Column header sits outside the scrollable card list (kanbanCards owns the
+   vertical scroll below), so it stays in place while cards scroll — no
+   position:sticky trick needed. */
+.kanbanCards {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* This is the grid item filling the 1fr row in .kanbanCol. Without
+     min-height:0, its default min-height:auto forces the row to grow to fit
+     all card content (the "flex/grid blowout" bug), which is what was
+     letting 122 cards get crushed into the column's fixed max-height
+     instead of the column scrolling past them. */
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
 .kanbanDropActive { background: rgba(30,103,150,0.04); }
 .cardMiniDragging { opacity: .55; }
 
@@ -351,34 +376,19 @@ input:focus, select:focus, textarea:focus {
   background: var(--primary);
   color: white;
 }
-.kanban.kanban-fit {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 10px;
-  align-items: stretch;
-}
+/* Expanded column widths: both density modes stay within the ~360-400px
+   target range and never shrink below it (flex-shrink:0 via flex-basis). */
 .kanban.kanban-fit .kanbanCol {
-  flex: 0 0 250px;
-  width: 250px;
-  max-width: 250px;
-}
-.kanban.kanban-comfortable {
-  display: flex;
-  gap: 16px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 16px;
-  align-items: stretch;
+  flex: 0 0 360px;
+  width: 360px;
+  min-width: 360px;
+  max-width: 360px;
 }
 .kanban.kanban-comfortable .kanbanCol {
-  flex: 0 0 300px;
-  width: 300px;
-  max-width: 300px;
-}
-.kanban.kanban-comfortable .cardMini {
-  overflow: hidden;
+  flex: 0 0 400px;
+  width: 400px;
+  min-width: 400px;
+  max-width: 400px;
 }
 .kanban .cardMini * {
   min-width: 0;
@@ -389,20 +399,6 @@ input:focus, select:focus, textarea:focus {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-@media (max-width: 760px) {
-  .kanban.kanban-fit,
-  .kanban.kanban-comfortable {
-    display: grid;
-    grid-template-columns: 1fr;
-    overflow-x: visible;
-  }
-  .kanban.kanban-fit .kanbanCol,
-  .kanban.kanban-comfortable .kanbanCol {
-    width: auto;
-    max-width: none;
-    flex-basis: auto;
-  }
 }
 
 /* Pipeline redesign: stage accent, card variants, badges, collapsible columns */
@@ -592,9 +588,10 @@ input:focus, select:focus, textarea:focus {
 
 .kanban-comfortable .kanbanCol.kanbanColCollapsed,
 .kanban-fit .kanbanCol.kanbanColCollapsed {
-  flex: 0 0 46px;
-  width: 46px;
-  max-width: 46px;
+  flex: 0 0 68px;
+  width: 68px;
+  min-width: 68px;
+  max-width: 68px;
 }
 
 .kanbanCol.kanbanColCollapsed {
