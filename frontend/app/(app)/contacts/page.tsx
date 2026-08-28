@@ -14,6 +14,7 @@ export default function ContactsPage() {
   const [items, setItems] = useState<CustomerOut[]>([]);
   const [busy, setBusy] = useState(true);
 
+  const [showCreate, setShowCreate] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -57,6 +58,7 @@ export default function ContactsPage() {
       setEmail("");
       setPhone("");
       setCompany("");
+      setShowCreate(false);
       await load();
     } catch (err: any) {
       toast.push(err?.message || "Failed to create", "error");
@@ -96,38 +98,77 @@ export default function ContactsPage() {
 
   return (
     <div className="stack">
-      <Topbar title="Contacts" />
+      <Topbar
+        title="Contacts"
+        right={<button className="btn btnPrimary" onClick={() => setShowCreate(true)}>Add contact</button>}
+      />
 
-      <div className="split">
-        <section className="card">
-          <div className="cardHeader" style={{ fontWeight: 900 }}>All contacts</div>
-          <div className="cardBody">
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
-              <input
-                placeholder="Search name, email, phone, company…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                style={{ flex: 1, minWidth: 200 }}
-              />
-              <button
-                type="button"
-                className="btn"
-                style={alphabetical ? { opacity: 0.55 } : undefined}
-                title="Toggle sort direction"
-                onClick={() => { setAlphabetical(false); setDateDir((d) => (d === "oldest" ? "newest" : "oldest")); }}
-              >
-                {dateDir === "oldest" ? "↑ Oldest first" : "↓ Newest first"}
-              </button>
-              <button
-                type="button"
-                className="btn"
-                style={alphabetical ? { background: "var(--primary)", color: "#fff", borderColor: "var(--primary)" } : undefined}
-                title="Toggle alphabetical sort"
-                onClick={() => setAlphabetical((a) => !a)}
-              >
-                A–Z
-              </button>
+      {showCreate && (
+        <div className="modalOverlay" onClick={() => setShowCreate(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modalHeader" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontWeight: 900 }}>Create contact</div>
+              <button className="btn" onClick={() => setShowCreate(false)}>Close</button>
             </div>
+            <div className="modalBody">
+              <form onSubmit={onCreate} className="stack">
+                <label className="stack" style={{ gap: 6 }}>
+                  <span className="muted" style={{ fontSize: 12 }}>Name</span>
+                  <input className="formField" value={name} onChange={(e) => setName(e.target.value)} required />
+                </label>
+                <label className="stack" style={{ gap: 6 }}>
+                  <span className="muted" style={{ fontSize: 12 }}>Email</span>
+                  <input className="formField" value={email} onChange={(e) => setEmail(e.target.value)} type="email" />
+                </label>
+                <label className="stack" style={{ gap: 6 }}>
+                  <span className="muted" style={{ fontSize: 12 }}>Phone</span>
+                  <input className="formField" value={phone} onChange={(e) => setPhone(e.target.value)} />
+                </label>
+                <label className="stack" style={{ gap: 6 }}>
+                  <span className="muted" style={{ fontSize: 12 }}>Company / Source</span>
+                  <input className="formField" value={company} onChange={(e) => setCompany(e.target.value)} placeholder="e.g. London event, Instagram, referral…" />
+                </label>
+
+                <button className="btn btnPrimary" type="submit">Create</button>
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Using <b>Option A</b>: classification/source is stored in <b>company</b>.
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <section className="card">
+        <div className="cardHeader" style={{ fontWeight: 900 }}>All contacts</div>
+        <div className="cardBody">
+          <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 12 }}>
+            <input
+              placeholder="Search name, email, phone, company…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              style={{ flex: 1, minWidth: 200 }}
+            />
+            <button
+              type="button"
+              className="btn"
+              style={alphabetical ? { opacity: 0.55 } : undefined}
+              title="Toggle sort direction"
+              onClick={() => { setAlphabetical(false); setDateDir((d) => (d === "oldest" ? "newest" : "oldest")); }}
+            >
+              {dateDir === "oldest" ? "↑ Oldest first" : "↓ Newest first"}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              style={alphabetical ? { background: "var(--primary)", color: "#fff", borderColor: "var(--primary)" } : undefined}
+              title="Toggle alphabetical sort"
+              onClick={() => setAlphabetical((a) => !a)}
+            >
+              A–Z
+            </button>
+          </div>
+          <div style={{ overflowX: "auto" }}>
             <table className="table">
               <thead>
                 <tr>
@@ -178,37 +219,8 @@ export default function ContactsPage() {
               </tbody>
             </table>
           </div>
-        </section>
-
-        <section className="card">
-          <div className="cardHeader" style={{ fontWeight: 900 }}>Create contact</div>
-          <div className="cardBody">
-            <form onSubmit={onCreate} className="stack">
-              <label className="stack" style={{ gap: 6 }}>
-                <span className="muted" style={{ fontSize: 12 }}>Name</span>
-                <input value={name} onChange={(e) => setName(e.target.value)} required />
-              </label>
-              <label className="stack" style={{ gap: 6 }}>
-                <span className="muted" style={{ fontSize: 12 }}>Email</span>
-                <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" />
-              </label>
-              <label className="stack" style={{ gap: 6 }}>
-                <span className="muted" style={{ fontSize: 12 }}>Phone</span>
-                <input value={phone} onChange={(e) => setPhone(e.target.value)} />
-              </label>
-              <label className="stack" style={{ gap: 6 }}>
-                <span className="muted" style={{ fontSize: 12 }}>Company / Source</span>
-                <input value={company} onChange={(e) => setCompany(e.target.value)} placeholder="e.g. London event, Instagram, referral…" />
-              </label>
-
-              <button className="btn btnPrimary" type="submit">Create</button>
-              <div className="muted" style={{ fontSize: 12 }}>
-                Using <b>Option A</b>: classification/source is stored in <b>company</b>.
-              </div>
-            </form>
-          </div>
-        </section>
-      </div>
+        </div>
+      </section>
     </div>
   );
 }

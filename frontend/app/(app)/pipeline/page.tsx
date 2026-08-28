@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Topbar } from "@/components/Topbar";
 import { apiFetch } from "@/lib/api";
-import type { EventOut, InboxCustomerOut } from "@/lib/types";
+import type { EventOut, InboxCustomerOut, TagOut } from "@/lib/types";
 import { LOST_REASONS, PIPELINE_STAGES, SERVICE_TAGS, stageLabel, sourceMeta, stageAccent, ownerInitials, countryFromPhone } from "@/lib/constants";
 import { LeadDrawer } from "@/components/LeadDrawer";
 import { useToast } from "@/components/Toast";
@@ -50,6 +50,8 @@ export default function PipelinePage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [bulkStage, setBulkStage] = useState("");
+  const [bulkTag, setBulkTag] = useState("");
+  const [allTags, setAllTags] = useState<TagOut[]>([]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [viewMode, setViewMode] = useState<"fit" | "comfortable">("fit");
   const [dateDir, setDateDir] = useState<"oldest" | "newest">("oldest");
@@ -64,6 +66,15 @@ export default function PipelinePage() {
     const savedCardStyle = window.localStorage.getItem("pipeline_card_style");
     if (savedCardStyle === "minimal" || savedCardStyle === "detailed" || savedCardStyle === "accent") setCardStyle(savedCardStyle);
   }, []);
+
+  useEffect(() => {
+    apiFetch<TagOut[]>("/tags").then(setAllTags).catch(() => {});
+  }, []);
+
+  const serviceTagOptions = useMemo(() => {
+    const fromApi = allTags.map((t) => t.name).filter((n) => n.startsWith("service:"));
+    return fromApi.length ? Array.from(new Set(fromApi)).sort() : SERVICE_TAGS;
+  }, [allTags]);
 
   function changeViewMode(mode: "fit" | "comfortable") {
     setViewMode(mode);
@@ -172,6 +183,7 @@ export default function PipelinePage() {
   function clearSelected() {
     setSelectedIds(new Set());
     setBulkStage("");
+    setBulkTag("");
   }
 
   async function moveLeadToStage(leadId: string, stage: string) {
@@ -197,6 +209,25 @@ export default function PipelinePage() {
       clearSelected();
     } catch (err: any) {
       toast.push(err?.message || "Bulk move failed", "error");
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function bulkApplyTag(ids: string[], tagName: string) {
+    if (!ids.length || !tagName) return;
+    setBulkBusy(true);
+    try {
+      await Promise.all(
+        ids.map((id) => apiFetch(`/inbox/customers/${id}/tags/add`, { method: "POST", body: JSON.stringify({ tag: tagName }) }))
+      );
+      setLeads((prev) =>
+        prev.map((l) => (ids.includes(l.id) && !(l.tags || []).includes(tagName) ? { ...l, tags: [...(l.tags || []), tagName] } : l))
+      );
+      toast.push(`Tagged ${ids.length} lead${ids.length > 1 ? "s" : ""}`);
+      clearSelected();
+    } catch (err: any) {
+      toast.push(err?.message || "Bulk tag failed", "error");
     } finally {
       setBulkBusy(false);
     }
@@ -291,6 +322,11 @@ export default function PipelinePage() {
                 {PIPELINE_STAGES.map((s) => <option key={s} value={s}>{stageLabel(s)}</option>)}
               </select>
               <button className="btn" disabled={!bulkStage || bulkBusy} onClick={() => bulkMove(Array.from(selectedIds), bulkStage)}>Move</button>
+              <select value={bulkTag} onChange={(e) => setBulkTag(e.target.value)} aria-label="Apply service tag to selected">
+                <option value="">Apply tag…</option>
+                {serviceTagOptions.map((t) => <option key={t} value={t}>{t.replace("service:", "")}</option>)}
+              </select>
+              <button className="btn" disabled={!bulkTag || bulkBusy} onClick={() => bulkApplyTag(Array.from(selectedIds), bulkTag)}>Tag</button>
               <button className="btn" disabled={bulkBusy} onClick={() => deleteCustomers(Array.from(selectedIds))}>Delete</button>
               <button className="btn" onClick={clearSelected}>Clear</button>
             </div>

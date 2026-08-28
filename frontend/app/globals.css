@@ -54,6 +54,24 @@ input, select, textarea {
   outline: none;
 }
 
+/* Opt-in: fields inside a dedicated form panel (Events "Book customer",
+   Tags "Create tag") should fill their column instead of sizing to content.
+   Deliberately NOT a bare input/select/textarea rule or scoped to .grid/
+   .stack, since both are reused as generic page-layout wrappers everywhere
+   (incl. toolbars and card checkboxes) -- a blanket rule previously
+   stretched every checkbox on the site to 100% width (squeezing card names
+   to 0px) and blew toolbar selects up onto their own wrapped lines. */
+.formField {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+input[type="checkbox"], input[type="radio"] {
+  width: auto;
+  min-width: auto;
+}
+
 input:focus, select:focus, textarea:focus {
   border-color: rgba(30, 103, 150, 0.5);
   box-shadow: 0 0 0 3px rgba(30, 103, 150, 0.12);
@@ -93,6 +111,7 @@ input:focus, select:focus, textarea:focus {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+  min-width: 0;
 }
 
 .cardHeader {
@@ -105,6 +124,7 @@ input:focus, select:focus, textarea:focus {
 .grid {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .table {
@@ -221,7 +241,9 @@ input:focus, select:focus, textarea:focus {
   display: grid;
   gap: 12px;
   grid-template-columns: 1.7fr 1fr;
+  min-width: 0;
 }
+.split > * { min-width: 0; }
 
 @media (max-width: 980px) {
   .layout { grid-template-columns: 1fr; }

@@ -80,7 +80,7 @@ export default function TagsPage() {
           <div className="cardHeader" style={{ fontWeight: 900 }}>Create tag</div>
           <div className="cardBody">
             <form onSubmit={onCreate} className="stack">
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. service:TMJ, source:Instagram" />
+              <input className="formField" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. service:TMJ, source:Instagram" />
               <button className="btn btnPrimary" type="submit">Create</button>
               <div className="muted" style={{ fontSize: 12 }}>
                 Recommended pattern: <b>service:*</b>, <b>source:*</b>, <b>priority:*</b>.

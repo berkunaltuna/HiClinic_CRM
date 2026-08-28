@@ -133,9 +133,9 @@ export default function EventDetailPage() {
         <div className="cardHeader" style={{ fontWeight: 900 }}>Event settings</div>
         <form className="cardBody grid" onSubmit={saveEvent}>
           <div className="grid" style={{ gridTemplateColumns: "2fr 2fr 1fr", alignItems: "end" }}>
-            <label>Event name<input value={editName} onChange={(e) => setEditName(e.target.value)} required /></label>
-            <label>Location / address<input value={editLocation} onChange={(e) => setEditLocation(e.target.value)} placeholder="Location / address" /></label>
-            <label>Capacity per slot<input type="number" min={1} max={50} value={editCapacity} onChange={(e) => setEditCapacity(Number(e.target.value))} /></label>
+            <label>Event name<input className="formField" value={editName} onChange={(e) => setEditName(e.target.value)} required /></label>
+            <label>Location / address<input className="formField" value={editLocation} onChange={(e) => setEditLocation(e.target.value)} placeholder="Location / address" /></label>
+            <label>Capacity per slot<input className="formField" type="number" min={1} max={50} value={editCapacity} onChange={(e) => setEditCapacity(Number(e.target.value))} /></label>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
             <div className="muted">If you reduce capacity, the CRM checks existing slots first and blocks unsafe changes.</div>
@@ -148,17 +148,17 @@ export default function EventDetailPage() {
         <section className="card">
           <div className="cardHeader" style={{ fontWeight: 900 }}>Book customer</div>
           <form className="cardBody grid" onSubmit={book}>
-            <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} required>
+            <select className="formField" value={customerId} onChange={(e) => setCustomerId(e.target.value)} required>
               <option value="">Select CRM customer…</option>
               {customers.map((c) => <option key={c.id} value={c.id}>{c.name} {c.latest_deal?.treatment_interest ? `— ${c.latest_deal.treatment_interest}` : ""}</option>)}
             </select>
-            <select value={day} onChange={(e) => setDay(e.target.value)}>
+            <select className="formField" value={day} onChange={(e) => setDay(e.target.value)}>
               {event.days.map((d) => <option key={d.id} value={d.day}>{d.label || d.day}</option>)}
             </select>
-            <select value={time} onChange={(e) => setTime(e.target.value)}>
+            <select className="formField" value={time} onChange={(e) => setTime(e.target.value)}>
               {selectableSlots.map((slot) => <option key={slot} value={slot}>{slot}</option>)}
             </select>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" />
+            <textarea className="formField" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" />
             {selectedCustomer && <WhatsAppQuickAction customer={selectedCustomer} />}
             <button className="btn btnPrimary" type="submit">Place in timetable</button>
           </form>

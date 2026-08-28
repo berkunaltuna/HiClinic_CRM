@@ -261,12 +261,14 @@ def _collect_form_tags(treatment_interest: Any, preferred_consultation_day: Any,
 
 
 
-def _clean_tag_fragment(value: Any) -> str | None:
+def _clean_tag_fragment(value: Any, max_len: int = 80) -> str | None:
     text = str(value or "").strip()
     if not text:
         return None
+    # Make/Facebook slug values arrive underscore_separated
+    # (e.g. "body_contouring_(tummy_tuck,_bbl,_lipo)"); make them readable.
     text = " ".join(text.replace("_", " ").split())
-    return text[:80]
+    return text[:max_len]
 
 def _attribution_from_lead(lead: dict[str, Any]) -> dict[str, str | None]:
     return {
@@ -392,6 +394,15 @@ def _ingest_graph_style_lead(
         "seminar_preference",
         "seminar preference",
     )
+
+    # Make/Facebook send these as underscore_separated slugs; humanize before
+    # they're stored on the deal or used to build tag names. This still
+    # matches TREATMENT_TAG_MAP/CONSULTATION_DAY_TAG_MAP/SEMINAR_PREFERENCE_TAG_MAP
+    # below, since _map_answer_to_tag re-normalises spaces back to
+    # underscores when looking up the fuzzy key.
+    treatment_interest = _clean_tag_fragment(treatment_interest, max_len=200)
+    preferred_consultation_day = _clean_tag_fragment(preferred_consultation_day, max_len=200)
+    seminar_preference = _clean_tag_fragment(seminar_preference, max_len=300)
 
     form_tag_names = _collect_form_tags(
         treatment_interest,
@@ -520,11 +531,11 @@ def _ingest_graph_style_lead(
     if is_new_customer:
         add_tag_to_customer(db, customer=customer, tag_name="new_lead")
     if treatment_interest:
-        add_tag_to_customer(db, customer=customer, tag_name=f"interest:{treatment_interest}")
+        add_tag_to_customer(db, customer=customer, tag_name=f"interest:{treatment_interest}"[:80])
     if preferred_consultation_day:
-        add_tag_to_customer(db, customer=customer, tag_name=f"day:{preferred_consultation_day}")
+        add_tag_to_customer(db, customer=customer, tag_name=f"day:{preferred_consultation_day}"[:80])
     if seminar_preference:
-        add_tag_to_customer(db, customer=customer, tag_name=f"seminar:{seminar_preference}")
+        add_tag_to_customer(db, customer=customer, tag_name=f"seminar:{seminar_preference}"[:80])
     for prefix, attr_key in [("form", "form_name"), ("campaign", "campaign_name"), ("adset", "adset_name"), ("ad", "ad_name")]:
         fragment = _clean_tag_fragment(attribution.get(attr_key))
         if fragment:
