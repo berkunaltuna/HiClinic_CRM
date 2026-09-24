@@ -68,7 +68,7 @@ def list_deals(
     user: User = Depends(get_current_user),
 ) -> list[DealOut]:
     _get_customer(db, customer_id, user)
-    return db.query(Deal).filter(Deal.customer_id == customer_id).order_by(Deal.id.asc()).all()
+    return db.query(Deal).filter(Deal.customer_id == customer_id).order_by(Deal.created_at.asc()).all()
 
 
 @router.patch("/deals/{deal_id}", response_model=DealOut)

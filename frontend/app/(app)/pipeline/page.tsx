@@ -54,10 +54,11 @@ export default function PipelinePage() {
   const [allTags, setAllTags] = useState<TagOut[]>([]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [viewMode, setViewMode] = useState<"fit" | "comfortable">("fit");
-  const [dateDir, setDateDir] = useState<"oldest" | "newest">("oldest");
+  const [dateDir, setDateDir] = useState<"oldest" | "newest">("newest");
   const [alphabetical, setAlphabetical] = useState(false);
   const [cardStyle, setCardStyle] = useState<"minimal" | "detailed" | "accent">("detailed");
   const [source, setSource] = useState("");
+  const [formFilter, setFormFilter] = useState("");
   const [collapsedStages, setCollapsedStages] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
@@ -134,12 +135,27 @@ export default function PipelinePage() {
     return Array.from(seen.entries()).map(([value, label]) => ({ value, label }));
   }, [leads]);
 
+  // Distinguishes leads by which Facebook/Make lead form they came from
+  // (e.g. an "Aesthetics" form vs. a "Hair Transplant" form), independent
+  // of manual tagging.
+  const formOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const l of leads) {
+      const label = (l.form_name || l.campaign_name || "").trim();
+      if (!label) continue;
+      const key = label.toLowerCase();
+      if (!seen.has(key)) seen.set(key, label);
+    }
+    return Array.from(seen.entries()).map(([value, label]) => ({ value, label }));
+  }, [leads]);
+
   const grouped = useMemo(() => {
     const map: Record<string, InboxCustomerOut[]> = {};
     for (const s of PIPELINE_STAGES) map[s] = [];
     const query = q.trim().toLowerCase();
     for (const l of leads) {
       if (source && (l.lead_source || "").trim().toLowerCase() !== source) continue;
+      if (formFilter && (l.form_name || l.campaign_name || "").trim().toLowerCase() !== formFilter) continue;
       if (query) {
         const haystack = [
           l.name,
@@ -163,7 +179,7 @@ export default function PipelinePage() {
         : (a: InboxCustomerOut, b: InboxCustomerOut) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
     for (const s of PIPELINE_STAGES) map[s].sort(sorter);
     return map;
-  }, [leads, dateDir, alphabetical, source, q]);
+  }, [leads, dateDir, alphabetical, source, formFilter, q]);
 
   const allCollapsed = PIPELINE_STAGES.every((s) => {
     const stageLeads = grouped[s] || [];
@@ -266,6 +282,10 @@ export default function PipelinePage() {
             <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="Filter by lead source">
               <option value="">All sources</option>
               {sourceOptions.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+            <select value={formFilter} onChange={(e) => setFormFilter(e.target.value)} aria-label="Filter by lead form">
+              <option value="">All forms</option>
+              {formOptions.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
             </select>
             <button
               type="button"

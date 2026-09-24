@@ -448,6 +448,7 @@ Suggested Make request body:
   "lead_id": "1234567890",
   "page_id": "295777210289573",
   "form_id": "987654321",
+  "form_name": "Aesthetics Consultation Form",
   "campaign_id": "111",
   "campaign_name": "TMJ Campaign",
   "adset_id": "222",
@@ -458,6 +459,9 @@ Suggested Make request body:
   "email": "jane@example.com",
   "phone": "+447700900123",
   "company": "Health Journey",
+  "created_time": "2026-09-18T06:35:11.000Z",
   "raw": {}
 }
 ```
+
+`created_time` should be mapped from the Facebook Lead Ads trigger module's **Date created** output field. Without it, the CRM falls back to stamping `created_at` at the moment the webhook is processed, which can put leads out of chronological order if Make delivers them out of submission order (batching, retries, scenario re-runs).

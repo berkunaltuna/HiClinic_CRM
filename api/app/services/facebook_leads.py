@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
 import httpx
+from dateutil import parser as date_parser
 from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
 import sqlalchemy as sa
@@ -207,6 +209,19 @@ def _coalesce(*values: Any) -> str | None:
     return None
 
 
+def _parse_lead_submitted_at(value: Any) -> datetime | None:
+    text = _as_str(value)
+    if not text:
+        return None
+    try:
+        parsed = date_parser.parse(text)
+    except (ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 def _normalise_answer_key(value: Any) -> str:
     text = str(value or "").strip()
     # Make commonly sends values like sunday,_28th_june_2026. Keep commas and
@@ -348,6 +363,15 @@ def _graph_lead_from_make_payload(payload: dict[str, Any]) -> dict[str, Any]:
     lead.setdefault("ad_id", _coalesce(payload.get("ad_id")))
     lead.setdefault("ad_name", _coalesce(payload.get("ad_name")))
     lead.setdefault("platform", _coalesce(payload.get("platform"), "facebook"))
+    lead.setdefault(
+        "created_time",
+        _coalesce(
+            payload.get("created_time"),
+            payload.get("submitted_at"),
+            payload.get("timestamp"),
+            payload.get("lead_created_time"),
+        ),
+    )
     lead["field_data"] = _build_field_data_from_make_payload(payload)
     return lead
 
@@ -410,6 +434,11 @@ def _ingest_graph_style_lead(
         seminar_preference,
     )
     attribution = _attribution_from_lead(lead)
+    # Make (and retried/replayed webhook deliveries) can deliver leads out of
+    # the order they were actually submitted on Facebook. Use Facebook's own
+    # created_time when present so created_at reflects true submission order
+    # instead of "whenever this webhook happened to be processed".
+    submitted_at = _parse_lead_submitted_at(lead.get("created_time"))
 
     customer = _find_existing_customer(db, owner.id, email=email, phone=phone)
     is_new_customer = customer is None
@@ -432,6 +461,8 @@ def _ingest_graph_style_lead(
             ad_id=attribution.get("ad_id"),
             ad_name=attribution.get("ad_name"),
         )
+        if submitted_at is not None:
+            customer.created_at = submitted_at
         db.add(customer)
         db.flush()
     else:
@@ -463,6 +494,8 @@ def _ingest_graph_style_lead(
             preferred_consultation_day=preferred_consultation_day,
             seminar_preference=seminar_preference,
         )
+        if submitted_at is not None:
+            deal.created_at = submitted_at
         db.add(deal)
         db.flush()
     else:
@@ -524,6 +557,8 @@ def _ingest_graph_style_lead(
         content=json.dumps(summary, ensure_ascii=False),
         provider_message_id=lead_id,
     )
+    if submitted_at is not None:
+        interaction.occurred_at = submitted_at
     db.add(interaction)
 
     add_tag_to_customer(db, customer=customer, tag_name="facebook")
