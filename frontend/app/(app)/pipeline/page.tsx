@@ -101,7 +101,9 @@ export default function PipelinePage() {
     setBusy(true);
     try {
       const qs = new URLSearchParams();
-      qs.set("limit", "200");
+      // The Kanban board isn't paginated, so request everything up to the
+      // server's hard cap rather than silently truncating the pipeline.
+      qs.set("limit", "10000");
       if (tag) qs.set("tag", tag);
       if (eventId) qs.set("event_id", eventId);
       const [data, evs] = await Promise.all([

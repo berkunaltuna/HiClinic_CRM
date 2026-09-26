@@ -71,7 +71,7 @@ def list_inbox_customers(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[InboxCustomerOut]:
-    limit = min(max(limit, 1), 200)
+    limit = min(max(limit, 1), 10000)
     offset = max(offset, 0)
 
     last_in = (
