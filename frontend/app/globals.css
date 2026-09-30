@@ -95,6 +95,14 @@ input:focus, select:focus, textarea:focus {
 
 .btnPrimary:hover { background: var(--primary-700); }
 
+.btnDanger {
+  background: #b91c1c;
+  border-color: #b91c1c;
+  color: white;
+}
+
+.btnDanger:hover { background: #991b1b; }
+
 .chip {
   display: inline-flex;
   align-items: center;

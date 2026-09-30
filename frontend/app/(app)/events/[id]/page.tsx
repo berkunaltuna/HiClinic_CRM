@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Topbar } from "@/components/Topbar";
 import { apiFetch } from "@/lib/api";
 import type { AppointmentOut, CustomerOut, EventOut } from "@/lib/types";
@@ -32,6 +32,7 @@ function slots(day: string, start: string, end: string, step: number) {
 
 export default function EventDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const toast = useToast();
   const [event, setEvent] = useState<EventOut | null>(null);
   const [appointments, setAppointments] = useState<AppointmentOut[]>([]);
@@ -117,6 +118,17 @@ export default function EventDetailPage() {
     }
   }
 
+  async function deleteEvent() {
+    if (!event || !confirm(`Delete "${event.name}"? This removes its timetable and all booked appointments.`)) return;
+    try {
+      await apiFetch<void>(`/events/${event.id}`, { method: "DELETE" });
+      toast.push("Event deleted");
+      router.push("/events");
+    } catch (err: any) {
+      toast.push(err?.message || "Failed to delete event", "error");
+    }
+  }
+
   async function remove(appt: AppointmentOut) {
     if (!event || !confirm(`Remove appointment for ${appt.customer_name}?`)) return;
     await apiFetch<void>(`/events/${event.id}/appointments/${appt.id}`, { method: "DELETE" });
@@ -128,7 +140,7 @@ export default function EventDetailPage() {
 
   return (
     <div className="stack">
-      <Topbar title={event.name} />
+      <Topbar title={event.name} right={<button className="btn btnDanger" onClick={() => void deleteEvent()}>Delete event</button>} />
       <section className="card">
         <div className="cardHeader" style={{ fontWeight: 900 }}>Event settings</div>
         <form className="cardBody grid" onSubmit={saveEvent}>

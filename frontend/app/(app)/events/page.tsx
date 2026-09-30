@@ -34,6 +34,17 @@ export default function EventsPage() {
 
   useEffect(() => { void load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  async function deleteEvent(ev: EventOut) {
+    if (!confirm(`Delete "${ev.name}"? This removes its timetable and all booked appointments.`)) return;
+    try {
+      await apiFetch<void>(`/events/${ev.id}`, { method: "DELETE" });
+      toast.push("Event deleted");
+      await load();
+    } catch (err: any) {
+      toast.push(err?.message || "Failed to delete event", "error");
+    }
+  }
+
   function datesBetween(start: string, end: string) {
     const out: string[] = [];
     const s = new Date(`${start}T00:00:00`);
@@ -108,12 +119,15 @@ export default function EventsPage() {
               <tbody>
                 {events.map((ev) => (
                   <tr key={ev.id}>
-                    <td><b>{ev.name}</b></td>
-                    <td>{ev.starts_on} → {ev.ends_on}</td>
-                    <td>{ev.location || "—"}</td>
-                    <td>{ev.default_slot_minutes} min</td>
-                    <td>{ev.slot_capacity || 1}/slot</td>
-                    <td><Link className="btn" href={`/events/${ev.id}`}>Open timetable</Link></td>
+                    <td style={{ verticalAlign: "middle" }}><b>{ev.name}</b></td>
+                    <td style={{ verticalAlign: "middle" }}>{ev.starts_on} → {ev.ends_on}</td>
+                    <td style={{ verticalAlign: "middle" }}>{ev.location || "—"}</td>
+                    <td style={{ verticalAlign: "middle" }}>{ev.default_slot_minutes} min</td>
+                    <td style={{ verticalAlign: "middle" }}>{ev.slot_capacity || 1}/slot</td>
+                    <td style={{ display: "flex", gap: 8, alignItems: "center", whiteSpace: "nowrap", justifyContent: "flex-end" }}>
+                      <Link className="btn btnPrimary" href={`/events/${ev.id}`}>Open timetable</Link>
+                      <button className="btn btnDanger" onClick={() => void deleteEvent(ev)}>Delete</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
