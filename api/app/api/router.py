@@ -23,6 +23,7 @@ from app.api import (
     users,
     audit,
     events,
+    event_imports,
 )
 
 api_router = APIRouter()
@@ -53,3 +54,4 @@ api_router.include_router(analytics.router)
 api_router.include_router(users.router)
 api_router.include_router(audit.router)
 api_router.include_router(events.router)
+api_router.include_router(event_imports.router)

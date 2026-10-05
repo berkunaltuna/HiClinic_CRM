@@ -108,6 +108,10 @@ class Settings:
         "Thanks for contacting us. A coordinator will reply shortly.",
     )
 
+    # Event booking Excel/CSV import
+    import_max_rows: int = int(os.getenv("IMPORT_MAX_ROWS", "1000"))
+    import_max_file_size_mb: int = int(os.getenv("IMPORT_MAX_FILE_SIZE_MB", "10"))
+
     # Phase 4B: optional keyword-to-tag mapping for inbound messages.
     # Example: {"implant": "implant_interest", "hair": "hair_transplant"}
     _keyword_tags_raw: str = os.getenv("KEYWORD_TAGS_JSON", "{}")

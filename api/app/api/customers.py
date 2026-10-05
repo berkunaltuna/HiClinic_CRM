@@ -11,7 +11,9 @@ from app.db.models import Customer, CustomerTag, Deal, OutboundMessage, Facebook
 from app.db.session import get_db
 from app.core.config import settings
 from app.schemas.customer import CustomerCreate, CustomerOut, CustomerUpdate
+from app.schemas.merge import MergeAnalysisOut, MergeCommitIn, MergeCommitOut, MergePreviewIn
 from app.services.audit import record_audit
+from app.services.customer_merge import MergeBlockedError, analyse_merge, lock_affected_events, lock_customers_ordered, merge_customers
 
 router = APIRouter(prefix="/customers", tags=["customers"])
 
@@ -131,3 +133,66 @@ def delete_customer(
     record_audit(db, actor=user, action="customer.deleted", entity_type="customer", entity_id=customer_id, before=before)
     db.commit()
     return Response(status_code=204)
+
+
+@router.post("/{survivor_id}/merge/preview", response_model=MergeAnalysisOut)
+def preview_customer_merge(
+    survivor_id: UUID,
+    payload: MergePreviewIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> MergeAnalysisOut:
+    if survivor_id == payload.loser_customer_id:
+        raise HTTPException(status_code=400, detail="Cannot merge a customer with itself")
+    survivor = _get_customer(db, survivor_id, user)
+    loser = _get_customer(db, payload.loser_customer_id, user)
+    analysis = analyse_merge(db, survivor=survivor, loser=loser)
+    return MergeAnalysisOut(**analysis.as_dict())
+
+
+@router.post("/{survivor_id}/merge/commit", response_model=MergeCommitOut)
+def commit_customer_merge(
+    survivor_id: UUID,
+    payload: MergeCommitIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> MergeCommitOut:
+    if survivor_id == payload.loser_customer_id:
+        raise HTTPException(status_code=400, detail="Cannot merge a customer with itself")
+    _get_customer(db, survivor_id, user)
+    _get_customer(db, payload.loser_customer_id, user)
+
+    # Lock both customers (fixed order, avoids deadlock against a concurrent reverse merge),
+    # then re-fetch and re-check visibility, then lock every event either of them has a booking
+    # in before touching any Appointment row.
+    lock_customers_ordered(db, survivor_id, payload.loser_customer_id)
+    survivor = _get_customer(db, survivor_id, user)
+    loser = _get_customer(db, payload.loser_customer_id, user)
+    lock_affected_events(db, survivor.id, loser.id)
+
+    # Recompute fresh under the locks -- never trust a client-held preview -- and compare against
+    # what the client confirmed. A mismatch means something changed since preview; commit nothing
+    # and hand back the updated analysis for re-confirmation instead.
+    fresh_analysis = analyse_merge(db, survivor=survivor, loser=loser)
+    if fresh_analysis.fingerprint != payload.confirmed_fingerprint:
+        raise HTTPException(
+            status_code=409,
+            detail={"requires_reconfirmation": True, "analysis": fresh_analysis.as_dict()},
+        )
+
+    try:
+        result = merge_customers(db, survivor=survivor, loser=loser, actor=user, analysis=fresh_analysis)
+    except MergeBlockedError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={"requires_manual_resolution": True, "analysis": exc.analysis.as_dict()},
+        ) from exc
+    db.commit()
+    db.refresh(survivor)
+    return MergeCommitOut(
+        survivor=survivor,
+        filled_fields=result.filled_fields,
+        cancelled_duplicate_appointment_ids=result.cancelled_duplicate_appointment_ids,
+        analysis=MergeAnalysisOut(**result.analysis.as_dict()),
+    )

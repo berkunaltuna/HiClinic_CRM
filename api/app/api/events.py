@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, time, timezone, timedelta
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.db.models import Appointment, Customer, Deal, Event, EventDay, User
 from app.db.session import get_db
 from app.schemas.event import AppointmentCreate, AppointmentOut, AppointmentUpdate, EventCreate, EventDayIn, EventDayOut, EventOut, EventUpdate
+from app.services.appointment_rules import lock_event_for_booking, validate_appointment_slot
 from app.services.audit import record_audit
 
 router = APIRouter(prefix="/events", tags=["events"])
@@ -41,10 +42,6 @@ def _get_customer(db: Session, customer_id: UUID, user: User) -> Customer:
     return customer
 
 
-def _minutes_since_midnight(value: time) -> int:
-    return value.hour * 60 + value.minute
-
-
 def _validate_capacity_reduction(event: Event, new_capacity: int, db: Session) -> None:
     if new_capacity >= (event.slot_capacity or 1):
         return
@@ -61,67 +58,23 @@ def _validate_capacity_reduction(event: Event, new_capacity: int, db: Session) -
         raise HTTPException(status_code=400, detail=f"Cannot reduce capacity to {new_capacity}; {when} already has {row.count} appointments")
 
 
-def _same_slot(existing: Appointment, starts: datetime, ends: datetime) -> bool:
-    return (
-        existing.starts_at.date() == starts.date()
-        and existing.ends_at.date() == ends.date()
-        and existing.starts_at.hour == starts.hour
-        and existing.starts_at.minute == starts.minute
-        and existing.ends_at.hour == ends.hour
-        and existing.ends_at.minute == ends.minute
-    )
-
-
-def _event_day_for_start(event: Event, starts: datetime) -> EventDay:
-    start_date = starts.date()
-    for day in event.days or []:
-        if day.day == start_date:
-            return day
-    raise HTTPException(status_code=400, detail="Appointment must be on one of the event days")
-
-
-def _check_appointment(event: Event, payload: AppointmentCreate | AppointmentUpdate, db: Session, appointment_id: UUID | None = None) -> None:
+def _check_appointment(
+    event: Event,
+    payload: AppointmentCreate | AppointmentUpdate,
+    db: Session,
+    appointment_id: UUID | None = None,
+    *,
+    ignore_capacity: bool = False,
+) -> None:
     starts = payload.starts_at
     ends = payload.ends_at
     if starts is None or ends is None:
         return
-    if ends <= starts:
-        raise HTTPException(status_code=400, detail="Appointment end must be after start")
-
-    day = _event_day_for_start(event, starts)
-    expected_end = starts + timedelta(minutes=day.slot_minutes)
-    if ends.replace(second=0, microsecond=0) != expected_end.replace(second=0, microsecond=0):
-        raise HTTPException(status_code=400, detail=f"Appointment must be exactly {day.slot_minutes} minutes")
-
-    starts_time = starts.time().replace(second=0, microsecond=0)
-    start_minutes = _minutes_since_midnight(starts_time)
-    day_start = _minutes_since_midnight(day.start_time)
-    day_end = _minutes_since_midnight(day.end_time)
-    if start_minutes < day_start or start_minutes + day.slot_minutes > day_end:
-        raise HTTPException(status_code=400, detail="Appointment must be inside the event day hours")
-    if (start_minutes - day_start) % day.slot_minutes != 0:
-        raise HTTPException(status_code=400, detail="Appointment start must match an available timetable slot")
-    if day.break_start_time and day.break_end_time:
-        break_start = _minutes_since_midnight(day.break_start_time)
-        break_end = _minutes_since_midnight(day.break_end_time)
-        if start_minutes < break_end and start_minutes + day.slot_minutes > break_start:
-            raise HTTPException(status_code=400, detail="Appointment overlaps the event break time")
-
-    q = db.query(Appointment).filter(
-        Appointment.event_id == event.id,
-        Appointment.status != "cancelled",
-        Appointment.starts_at < ends,
-        Appointment.ends_at > starts,
+    result = validate_appointment_slot(
+        event, starts, ends, db, exclude_appointment_id=appointment_id, ignore_capacity=ignore_capacity
     )
-    if appointment_id:
-        q = q.filter(Appointment.id != appointment_id)
-    overlapping = q.all()
-    misaligned = [a for a in overlapping if not _same_slot(a, starts, ends)]
-    if misaligned:
-        raise HTTPException(status_code=409, detail="This slot overlaps an existing appointment that is not aligned to the timetable")
-    capacity = event.slot_capacity or 1
-    if len(overlapping) >= capacity:
-        raise HTTPException(status_code=409, detail=f"This time slot is full ({capacity}/{capacity})")
+    if not result.ok:
+        raise HTTPException(status_code=result.http_status or 400, detail=result.error)
 
 
 @router.get("", response_model=list[EventOut])
@@ -197,6 +150,7 @@ def create_appointment(event_id: UUID, payload: AppointmentCreate, db: Session =
     customer = _get_customer(db, payload.customer_id, user)
     if payload.deal_id and db.get(Deal, payload.deal_id) is None:
         raise HTTPException(status_code=404, detail="Deal not found")
+    lock_event_for_booking(db, event.id)
     _check_appointment(event, payload, db)
     deal = db.get(Deal, payload.deal_id) if payload.deal_id else customer.latest_deal
     if deal is None:
@@ -222,6 +176,7 @@ def update_appointment(event_id: UUID, appointment_id: UUID, payload: Appointmen
     appt = db.get(Appointment, appointment_id)
     if appt is None or appt.event_id != event_id:
         raise HTTPException(status_code=404, detail="Appointment not found")
+    lock_event_for_booking(db, event_id)
     before = _appointment_snapshot(appt)
     data = payload.model_dump(exclude_unset=True)
     starts = data.get("starts_at", appt.starts_at)

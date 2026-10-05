@@ -9,6 +9,7 @@ import { fmtDateTime } from "@/lib/dates";
 import { PIPELINE_STAGES, SERVICE_TAGS, stageLabel } from "@/lib/constants";
 import { useToast } from "@/components/Toast";
 import { WhatsAppQuickAction } from "@/components/WhatsAppQuickAction";
+import { MergeCustomerDialog } from "@/components/MergeCustomerDialog";
 
 export default function ContactDetailPage() {
   const toast = useToast();
@@ -21,6 +22,7 @@ export default function ContactDetailPage() {
   const [templates, setTemplates] = useState<TemplateOut[]>([]);
   const [busy, setBusy] = useState(true);
   const [note, setNote] = useState("");
+  const [showMerge, setShowMerge] = useState(false);
 
   const [emailSubject, setEmailSubject] = useState("Hi {{customer_name}}");
   const [emailBody, setEmailBody] = useState("");
@@ -145,23 +147,29 @@ export default function ContactDetailPage() {
       <Topbar
         title="Contact"
         right={
-          <button
-            className="btn"
-            onClick={async () => {
-              if (!confirm(`Delete ${c?.name || "this contact"}? This cannot be undone.`)) return;
-              try {
-                await apiFetch(`/customers/${id}`, { method: "DELETE" });
-                toast.push("Contact deleted");
-                window.location.href = "/contacts";
-              } catch (err: any) {
-                toast.push(err?.message || "Failed to delete contact", "error");
-              }
-            }}
-          >
-            Delete
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn" onClick={() => setShowMerge(true)} disabled={!c}>Merge duplicate</button>
+            <button
+              className="btn"
+              onClick={async () => {
+                if (!confirm(`Delete ${c?.name || "this contact"}? This cannot be undone.`)) return;
+                try {
+                  await apiFetch(`/customers/${id}`, { method: "DELETE" });
+                  toast.push("Contact deleted");
+                  window.location.href = "/contacts";
+                } catch (err: any) {
+                  toast.push(err?.message || "Failed to delete contact", "error");
+                }
+              }}
+            >
+              Delete
+            </button>
+          </div>
         }
       />
+      {showMerge && c && (
+        <MergeCustomerDialog survivor={c} onClose={() => setShowMerge(false)} onMerged={() => { void load(); }} />
+      )}
 
       {busy && !c ? (
         <div className="card" style={{ padding: 16 }}>Loading…</div>

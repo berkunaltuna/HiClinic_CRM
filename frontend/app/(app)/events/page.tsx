@@ -6,12 +6,16 @@ import { Topbar } from "@/components/Topbar";
 import { apiFetch } from "@/lib/api";
 import type { EventOut } from "@/lib/types";
 import { useToast } from "@/components/Toast";
+import { EventImportWizard } from "@/components/EventImportWizard";
+import { EventExportDialog } from "@/components/EventExportDialog";
 
 export default function EventsPage() {
   const toast = useToast();
   const [events, setEvents] = useState<EventOut[]>([]);
   const [busy, setBusy] = useState(true);
   const [showNew, setShowNew] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [exportEvent, setExportEvent] = useState<EventOut | null>(null);
   const [name, setName] = useState("London OPD Event");
   const [location, setLocation] = useState("London");
   const [startsOn, setStartsOn] = useState("2026-06-27");
@@ -86,7 +90,24 @@ export default function EventsPage() {
 
   return (
     <div className="stack">
-      <Topbar title="Events" right={<button className="btn btnPrimary" onClick={() => setShowNew(true)}>New event</button>} />
+      <Topbar
+        title="Events"
+        right={
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn" onClick={() => setShowImport(true)}>Import bookings</button>
+            <button className="btn btnPrimary" onClick={() => setShowNew(true)}>New event</button>
+          </div>
+        }
+      />
+      {showImport && (
+        <EventImportWizard
+          onClose={() => setShowImport(false)}
+          onImported={() => { void load(); }}
+        />
+      )}
+      {exportEvent && (
+        <EventExportDialog event={exportEvent} onClose={() => setExportEvent(null)} />
+      )}
 
       {showNew && (
         <section className="card">
@@ -126,6 +147,7 @@ export default function EventsPage() {
                     <td style={{ verticalAlign: "middle" }}>{ev.slot_capacity || 1}/slot</td>
                     <td style={{ display: "flex", gap: 8, alignItems: "center", whiteSpace: "nowrap", justifyContent: "flex-end" }}>
                       <Link className="btn btnPrimary" href={`/events/${ev.id}`}>Open timetable</Link>
+                      <button className="btn" onClick={() => setExportEvent(ev)}>Export</button>
                       <button className="btn btnDanger" onClick={() => void deleteEvent(ev)}>Delete</button>
                     </td>
                   </tr>

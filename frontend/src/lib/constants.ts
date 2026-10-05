@@ -61,32 +61,34 @@ export function stageAccent(stage: string): string {
   return STAGE_ACCENT[stage] || "#94a3b8";
 }
 
-const CALLING_CODE_COUNTRY: [string, string][] = [
-  ["971", "AE"],
-  ["358", "FI"],
-  ["353", "IE"],
-  ["351", "PT"],
-  ["380", "UA"],
-  ["420", "CZ"],
-  ["44", "UK"],
-  ["49", "DE"],
-  ["33", "FR"],
-  ["31", "NL"],
-  ["46", "SE"],
-  ["39", "IT"],
-  ["43", "AT"],
-  ["34", "ES"],
-  ["41", "CH"],
-  ["45", "DK"],
-  ["47", "NO"],
-  ["32", "BE"],
-  ["30", "GR"],
-  ["90", "TR"],
-  ["48", "PL"],
-  ["36", "HU"],
-  ["1", "US"],
-  ["7", "RU"],
-].sort((a, b) => b[0].length - a[0].length);
+const CALLING_CODE_COUNTRY: [string, string][] = (
+  [
+    ["971", "AE"],
+    ["358", "FI"],
+    ["353", "IE"],
+    ["351", "PT"],
+    ["380", "UA"],
+    ["420", "CZ"],
+    ["44", "UK"],
+    ["49", "DE"],
+    ["33", "FR"],
+    ["31", "NL"],
+    ["46", "SE"],
+    ["39", "IT"],
+    ["43", "AT"],
+    ["34", "ES"],
+    ["41", "CH"],
+    ["45", "DK"],
+    ["47", "NO"],
+    ["32", "BE"],
+    ["30", "GR"],
+    ["90", "TR"],
+    ["48", "PL"],
+    ["36", "HU"],
+    ["1", "US"],
+    ["7", "RU"],
+  ] as [string, string][]
+).sort((a, b) => b[0].length - a[0].length);
 
 export function countryFromPhone(phone?: string | null): string | null {
   if (!phone) return null;

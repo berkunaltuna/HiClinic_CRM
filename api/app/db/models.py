@@ -574,6 +574,68 @@ class Appointment(Base):
     )
 
 
+class ImportBatch(Base):
+    """A single Excel/CSV event-booking import run (upload -> preview -> commit)."""
+
+    __tablename__ = "import_batches"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    owner_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=False)
+    event_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("events.id", ondelete="SET NULL"), nullable=True)
+    event_name_snapshot = sa.Column(sa.String(200))
+
+    source_filename = sa.Column(sa.String(300))
+    source_format = sa.Column(sa.String(10), nullable=False)  # 'xlsx' | 'csv'
+    mapping = sa.Column(sa.JSON(), nullable=True)
+
+    status = sa.Column(sa.String(20), nullable=False, server_default="uploaded")
+    committing_started_at = sa.Column(sa.DateTime(timezone=True), nullable=True)
+
+    row_count = sa.Column(sa.Integer(), nullable=False, server_default="0")
+    customers_created = sa.Column(sa.Integer(), nullable=False, server_default="0")
+    customers_updated = sa.Column(sa.Integer(), nullable=False, server_default="0")
+    rows_unchanged = sa.Column(sa.Integer(), nullable=False, server_default="0")
+    duplicates_merged = sa.Column(sa.Integer(), nullable=False, server_default="0")
+    bookings_created = sa.Column(sa.Integer(), nullable=False, server_default="0")
+    bookings_updated = sa.Column(sa.Integer(), nullable=False, server_default="0")
+    rows_flagged = sa.Column(sa.Integer(), nullable=False, server_default="0")
+
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    completed_at = sa.Column(sa.DateTime(timezone=True), nullable=True)
+
+    rows = relationship("ImportRow", back_populates="batch", cascade="all, delete-orphan", order_by="ImportRow.row_number")
+
+
+class ImportRow(Base):
+    """One spreadsheet row of an ImportBatch, with its resolved outcome."""
+
+    __tablename__ = "import_rows"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    batch_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("import_batches.id", ondelete="CASCADE"), nullable=False)
+    row_number = sa.Column(sa.Integer(), nullable=False)
+
+    raw_data = sa.Column(sa.JSON(), nullable=False)
+    mapped_data = sa.Column(sa.JSON(), nullable=True)
+
+    status = sa.Column(sa.String(20), nullable=False, server_default="pending")
+    match_type = sa.Column(sa.String(20), nullable=True)
+
+    customer_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
+    appointment_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
+
+    reasons = sa.Column(sa.JSON(), nullable=True)
+
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    batch = relationship("ImportBatch", back_populates="rows")
+
+    __table_args__ = (
+        sa.UniqueConstraint("batch_id", "row_number", name="uq_import_rows_batch_row"),
+        sa.Index("ix_import_rows_batch_status", "batch_id", "status"),
+    )
+
+
 class OutcomeType(str, Enum):
     consult_booked = "consult_booked"
     deposit_paid = "deposit_paid"

@@ -7,6 +7,8 @@ import { apiFetch } from "@/lib/api";
 import type { AppointmentOut, CustomerOut, EventOut } from "@/lib/types";
 import { useToast } from "@/components/Toast";
 import { WhatsAppQuickAction } from "@/components/WhatsAppQuickAction";
+import { EventImportWizard } from "@/components/EventImportWizard";
+import { EventExportDialog } from "@/components/EventExportDialog";
 
 function combine(day: string, time: string) {
   return `${day}T${time}:00`;
@@ -38,6 +40,8 @@ export default function EventDetailPage() {
   const [appointments, setAppointments] = useState<AppointmentOut[]>([]);
   const [customers, setCustomers] = useState<CustomerOut[]>([]);
   const [customerId, setCustomerId] = useState("");
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerListOpen, setCustomerListOpen] = useState(false);
   const [day, setDay] = useState("");
   const [time, setTime] = useState("09:00");
   const [notes, setNotes] = useState("");
@@ -45,6 +49,8 @@ export default function EventDetailPage() {
   const [editLocation, setEditLocation] = useState("");
   const [editCapacity, setEditCapacity] = useState(1);
   const [savingEvent, setSavingEvent] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [showExport, setShowExport] = useState(false);
 
   async function load() {
     const ev = await apiFetch<EventOut>(`/events/${id}`);
@@ -62,6 +68,27 @@ export default function EventDetailPage() {
   const selectedDay = useMemo(() => event?.days.find((d) => d.day === day) || event?.days[0], [event, day]);
   const selectedCustomer = customers.find((c) => c.id === customerId);
   const selectableSlots = useMemo(() => selectedDay ? slots(selectedDay.day, selectedDay.start_time, selectedDay.end_time, selectedDay.slot_minutes) : [], [selectedDay]);
+
+  // Customer search includes every customer regardless of stage (new, contacted, lost, etc).
+  const matchingCustomers = useMemo(() => {
+    const query = customerQuery.trim().toLowerCase();
+    if (!query) return customers;
+    return customers.filter((c) => {
+      const haystack = [c.name, c.email, c.phone, c.company].filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [customers, customerQuery]);
+
+  function selectCustomer(c: CustomerOut) {
+    setCustomerId(c.id);
+    setCustomerQuery(c.name);
+    setCustomerListOpen(false);
+  }
+
+  function clearCustomerSelection() {
+    setCustomerId("");
+    setCustomerQuery("");
+  }
 
   useEffect(() => {
     if (selectableSlots.length && !selectableSlots.includes(time)) setTime(selectableSlots[0]);
@@ -112,6 +139,7 @@ export default function EventDetailPage() {
       });
       toast.push("Appointment booked");
       setNotes("");
+      clearCustomerSelection();
       await load();
     } catch (err: any) {
       toast.push(err?.message || "Failed to book appointment", "error");
@@ -140,7 +168,24 @@ export default function EventDetailPage() {
 
   return (
     <div className="stack">
-      <Topbar title={event.name} right={<button className="btn btnDanger" onClick={() => void deleteEvent()}>Delete event</button>} />
+      <Topbar
+        title={event.name}
+        right={
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn" onClick={() => setShowExport(true)}>Export</button>
+            <button className="btn" onClick={() => setShowImport(true)}>Import bookings</button>
+            <button className="btn btnDanger" onClick={() => void deleteEvent()}>Delete event</button>
+          </div>
+        }
+      />
+      {showImport && (
+        <EventImportWizard
+          eventId={event.id}
+          onClose={() => setShowImport(false)}
+          onImported={() => { void load(); }}
+        />
+      )}
+      {showExport && <EventExportDialog event={event} onClose={() => setShowExport(false)} />}
       <section className="card">
         <div className="cardHeader" style={{ fontWeight: 900 }}>Event settings</div>
         <form className="cardBody grid" onSubmit={saveEvent}>
@@ -160,10 +205,56 @@ export default function EventDetailPage() {
         <section className="card">
           <div className="cardHeader" style={{ fontWeight: 900 }}>Book customer</div>
           <form className="cardBody grid" onSubmit={book}>
-            <select className="formField" value={customerId} onChange={(e) => setCustomerId(e.target.value)} required>
-              <option value="">Select CRM customer…</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name} {c.latest_deal?.treatment_interest ? `— ${c.latest_deal.treatment_interest}` : ""}</option>)}
-            </select>
+            <div style={{ position: "relative" }}>
+              <input
+                className="formField"
+                value={customerQuery}
+                onChange={(e) => {
+                  setCustomerQuery(e.target.value);
+                  setCustomerId("");
+                  setCustomerListOpen(true);
+                }}
+                onFocus={() => setCustomerListOpen(true)}
+                onBlur={() => setTimeout(() => setCustomerListOpen(false), 150)}
+                placeholder="Search customers by name, email or phone…"
+                required={!customerId}
+              />
+              {customerId && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={clearCustomerSelection}
+                  style={{ position: "absolute", right: 4, top: 4, bottom: 4, padding: "0 10px" }}
+                >
+                  Clear
+                </button>
+              )}
+              {customerListOpen && !customerId && (
+                <div
+                  className="card"
+                  style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10, maxHeight: 260, overflowY: "auto", marginTop: 4 }}
+                >
+                  {matchingCustomers.length === 0 ? (
+                    <div className="cardBody muted">No customers found</div>
+                  ) : (
+                    matchingCustomers.map((c) => (
+                      <div
+                        key={c.id}
+                        className="cardBody"
+                        style={{ cursor: "pointer", padding: "8px 12px", borderTop: "1px solid var(--border)" }}
+                        onMouseDown={() => selectCustomer(c)}
+                      >
+                        <div style={{ fontWeight: 700 }}>{c.name}</div>
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          {[c.email, c.phone].filter(Boolean).join(" · ") || "No contact info"}
+                          {c.latest_deal?.treatment_interest ? ` · ${c.latest_deal.treatment_interest}` : ""}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
             <select className="formField" value={day} onChange={(e) => setDay(e.target.value)}>
               {event.days.map((d) => <option key={d.id} value={d.day}>{d.label || d.day}</option>)}
             </select>

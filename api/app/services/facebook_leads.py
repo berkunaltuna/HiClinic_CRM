@@ -15,6 +15,7 @@ import sqlalchemy as sa
 
 from app.core.config import settings
 from app.db.models import Customer, Deal, DealStatus, FacebookLeadEvent, Interaction, OutboundMessage, User
+from app.services.matching import normalise_phone as _normalise_phone
 from app.services.tags import add_tag_to_customer
 
 GRAPH_API_BASE = "https://graph.facebook.com"
@@ -157,28 +158,6 @@ def _extract_field_fuzzy(field_data: list[dict[str, Any]], *names: str) -> str |
                     cleaned.append(text)
         return ", ".join(cleaned) if cleaned else None
     return None
-
-
-def _normalise_phone(raw: str | None) -> str | None:
-    if not raw:
-        return None
-    raw = raw.strip()
-    if not raw:
-        return None
-
-    is_plus = raw.startswith("+")
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    if not digits:
-        return raw
-    if is_plus:
-        return "+" + digits
-    if digits.startswith("00"):
-        return "+" + digits[2:]
-
-    country = (settings.default_country_code or "+44").strip()
-    if digits.startswith("0"):
-        digits = digits[1:]
-    return f"{country}{digits}"
 
 
 def _find_existing_customer(db: Session, owner_user_id, email: str | None, phone: str | None) -> Customer | None:

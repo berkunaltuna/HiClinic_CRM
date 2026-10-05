@@ -217,4 +217,82 @@ export type AppointmentOut = {
 };
 
 export type AttributionRow = { name: string; count: number };
+
+// Event booking Excel/CSV import
+export type ImportFieldMapping = Record<string, string>;
+
+export type ImportUploadOut = {
+  batch_id: UUID;
+  headers: string[];
+  suggested_mapping: ImportFieldMapping;
+  row_count: number;
+  sample_rows: Record<string, string | null>[];
+};
+
+export type ImportBatchOut = {
+  id: UUID;
+  event_id: UUID | null;
+  event_name_snapshot: string | null;
+  source_filename: string | null;
+  source_format: string;
+  mapping: ImportFieldMapping | null;
+  status: "uploaded" | "previewed" | "committing" | "committed" | "failed";
+  row_count: number;
+  customers_created: number;
+  customers_updated: number;
+  rows_unchanged: number;
+  duplicates_merged: number;
+  bookings_created: number;
+  bookings_updated: number;
+  rows_flagged: number;
+  created_at: string;
+  completed_at: string | null;
+};
+
+export type ImportRowOut = {
+  id: UUID;
+  row_number: number;
+  raw_data: Record<string, string | null>;
+  mapped_data: Record<string, unknown> | null;
+  status: "pending" | "created" | "updated" | "unchanged" | "flagged" | "error";
+  match_type: "id" | "phone" | "email" | "batch" | "none" | null;
+  customer_id: UUID | null;
+  appointment_id: UUID | null;
+  reasons: string[] | null;
+};
+
+export type ImportResultOut = {
+  batch: ImportBatchOut;
+  rows: ImportRowOut[];
+};
+
+// Customer merge
+export type FieldConflictOut = { field: string; survivor_value: string | null; loser_value: string | null };
+export type BookingPairOut = {
+  event_id: string;
+  event_name: string | null;
+  survivor_appointment_id: string;
+  loser_appointment_id: string;
+  starts_at: string;
+  kind: "identical" | "same_time_different_detail";
+  detail: Record<string, unknown>;
+  both_active: boolean;
+};
+export type MergeAnalysisOut = {
+  survivor_id: string;
+  loser_id: string;
+  conflicts: FieldConflictOut[];
+  identical_bookings: BookingPairOut[];
+  divergent_bookings: BookingPairOut[];
+  // Divergent (different status/notes/staff) pairs where BOTH sides are still active -- merging
+  // would double-book the slot, so these block "Confirm merge" until a human cancels one booking.
+  capacity_conflicts: BookingPairOut[];
+  fingerprint: string;
+};
+export type MergeCommitOut = {
+  survivor: CustomerOut;
+  filled_fields: string[];
+  cancelled_duplicate_appointment_ids: string[];
+  analysis: MergeAnalysisOut;
+};
 export type LostReasonRow = { reason: string; count: number };

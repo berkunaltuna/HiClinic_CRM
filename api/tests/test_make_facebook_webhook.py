@@ -19,7 +19,7 @@ def test_make_facebook_lead_creates_customer_deal_and_dedupes(client, db, token)
         "ad_name": "TMJ Creative A",
         "full_name": "Jane Doe",
         "email": "jane.make@example.com",
-        "phone": "07700900123",
+        "phone": "07700900124",
         "company": "Health Journey",
     }
 
@@ -37,7 +37,7 @@ def test_make_facebook_lead_creates_customer_deal_and_dedupes(client, db, token)
     customer = db.query(Customer).filter(Customer.email == "jane.make@example.com").first()
     assert customer is not None
     assert customer.name == "Jane Doe"
-    assert customer.phone == "+447700900123"
+    assert customer.phone == "+447700900124"
     assert customer.company == "Health Journey"
     assert customer.stage == "contacted"
     assert {"facebook", "facebook_lead", "new_lead"}.issubset(set(customer.tag_names))
