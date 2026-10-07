@@ -103,6 +103,8 @@ input:focus, select:focus, textarea:focus {
 
 .btnDanger:hover { background: #991b1b; }
 
+.btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+
 .chip {
   display: inline-flex;
   align-items: center;

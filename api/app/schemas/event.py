@@ -16,6 +16,15 @@ class EventDayIn(BaseModel):
     label: str | None = None
 
 
+class EventDayUpdate(BaseModel):
+    start_time: time | None = None
+    end_time: time | None = None
+    slot_minutes: int | None = Field(default=None, ge=5, le=240)
+    break_start_time: time | None = None
+    break_end_time: time | None = None
+    label: str | None = None
+
+
 class EventDayOut(EventDayIn):
     id: UUID
     event_id: UUID

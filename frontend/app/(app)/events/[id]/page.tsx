@@ -9,6 +9,7 @@ import { useToast } from "@/components/Toast";
 import { WhatsAppQuickAction } from "@/components/WhatsAppQuickAction";
 import { EventImportWizard } from "@/components/EventImportWizard";
 import { EventExportDialog } from "@/components/EventExportDialog";
+import { EventSettingsPanel, GearIcon } from "@/components/EventSettingsPanel";
 
 function combine(day: string, time: string) {
   return `${day}T${time}:00`;
@@ -45,10 +46,7 @@ export default function EventDetailPage() {
   const [day, setDay] = useState("");
   const [time, setTime] = useState("09:00");
   const [notes, setNotes] = useState("");
-  const [editName, setEditName] = useState("");
-  const [editLocation, setEditLocation] = useState("");
-  const [editCapacity, setEditCapacity] = useState(1);
-  const [savingEvent, setSavingEvent] = useState(false);
+  const [view, setView] = useState<"timetable" | "settings">("timetable");
   const [showImport, setShowImport] = useState(false);
   const [showExport, setShowExport] = useState(false);
 
@@ -56,9 +54,6 @@ export default function EventDetailPage() {
     const ev = await apiFetch<EventOut>(`/events/${id}`);
     setEvent(ev);
     setDay((current) => current || ev.days[0]?.day || ev.starts_on);
-    setEditName(ev.name);
-    setEditLocation(ev.location || "");
-    setEditCapacity(ev.slot_capacity || 1);
     setAppointments(await apiFetch<AppointmentOut[]>(`/events/${id}/appointments`));
     setCustomers(await apiFetch<CustomerOut[]>("/customers"));
   }
@@ -93,29 +88,6 @@ export default function EventDetailPage() {
   useEffect(() => {
     if (selectableSlots.length && !selectableSlots.includes(time)) setTime(selectableSlots[0]);
   }, [selectableSlots, time]);
-
-  async function saveEvent(e: FormEvent) {
-    e.preventDefault();
-    if (!event) return;
-    setSavingEvent(true);
-    try {
-      const updated = await apiFetch<EventOut>(`/events/${event.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          name: editName,
-          location: editLocation || null,
-          slot_capacity: editCapacity,
-        }),
-      });
-      setEvent(updated);
-      toast.push("Event updated");
-      await load();
-    } catch (err: any) {
-      toast.push(err?.message || "Failed to update event", "error");
-    } finally {
-      setSavingEvent(false);
-    }
-  }
 
   async function book(e: FormEvent) {
     e.preventDefault();
@@ -172,6 +144,17 @@ export default function EventDetailPage() {
         title={event.name}
         right={
           <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className={view === "settings" ? "btn btnPrimary" : "btn"}
+              onClick={() => setView((v) => (v === "settings" ? "timetable" : "settings"))}
+              title={view === "settings" ? "Back to timetable" : "Event settings"}
+              aria-label="Event settings"
+              aria-pressed={view === "settings"}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <GearIcon />
+              {view === "settings" && <span>Back to timetable</span>}
+            </button>
             <button className="btn" onClick={() => setShowExport(true)}>Export</button>
             <button className="btn" onClick={() => setShowImport(true)}>Import bookings</button>
             <button className="btn btnDanger" onClick={() => void deleteEvent()}>Delete event</button>
@@ -186,133 +169,122 @@ export default function EventDetailPage() {
         />
       )}
       {showExport && <EventExportDialog event={event} onClose={() => setShowExport(false)} />}
-      <section className="card">
-        <div className="cardHeader" style={{ fontWeight: 900 }}>Event settings</div>
-        <form className="cardBody grid" onSubmit={saveEvent}>
-          <div className="grid" style={{ gridTemplateColumns: "2fr 2fr 1fr", alignItems: "end" }}>
-            <label>Event name<input className="formField" value={editName} onChange={(e) => setEditName(e.target.value)} required /></label>
-            <label>Location / address<input className="formField" value={editLocation} onChange={(e) => setEditLocation(e.target.value)} placeholder="Location / address" /></label>
-            <label>Capacity per slot<input className="formField" type="number" min={1} max={50} value={editCapacity} onChange={(e) => setEditCapacity(Number(e.target.value))} /></label>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-            <div className="muted">If you reduce capacity, the CRM checks existing slots first and blocks unsafe changes.</div>
-            <button className="btn btnPrimary" type="submit" disabled={savingEvent}>{savingEvent ? "Saving…" : "Save event settings"}</button>
-          </div>
-        </form>
-      </section>
-
-      <div className="grid" style={{ gridTemplateColumns: "320px 1fr", alignItems: "start" }}>
-        <section className="card">
-          <div className="cardHeader" style={{ fontWeight: 900 }}>Book customer</div>
-          <form className="cardBody grid" onSubmit={book}>
-            <div style={{ position: "relative" }}>
-              <input
-                className="formField"
-                value={customerQuery}
-                onChange={(e) => {
-                  setCustomerQuery(e.target.value);
-                  setCustomerId("");
-                  setCustomerListOpen(true);
-                }}
-                onFocus={() => setCustomerListOpen(true)}
-                onBlur={() => setTimeout(() => setCustomerListOpen(false), 150)}
-                placeholder="Search customers by name, email or phone…"
-                required={!customerId}
-              />
-              {customerId && (
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={clearCustomerSelection}
-                  style={{ position: "absolute", right: 4, top: 4, bottom: 4, padding: "0 10px" }}
-                >
-                  Clear
-                </button>
-              )}
-              {customerListOpen && !customerId && (
-                <div
-                  className="card"
-                  style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10, maxHeight: 260, overflowY: "auto", marginTop: 4 }}
-                >
-                  {matchingCustomers.length === 0 ? (
-                    <div className="cardBody muted">No customers found</div>
-                  ) : (
-                    matchingCustomers.map((c) => (
-                      <div
-                        key={c.id}
-                        className="cardBody"
-                        style={{ cursor: "pointer", padding: "8px 12px", borderTop: "1px solid var(--border)" }}
-                        onMouseDown={() => selectCustomer(c)}
-                      >
-                        <div style={{ fontWeight: 700 }}>{c.name}</div>
-                        <div className="muted" style={{ fontSize: 12 }}>
-                          {[c.email, c.phone].filter(Boolean).join(" · ") || "No contact info"}
-                          {c.latest_deal?.treatment_interest ? ` · ${c.latest_deal.treatment_interest}` : ""}
+      {view === "settings" ? (
+        <EventSettingsPanel event={event} appointments={appointments} onSaved={load} />
+      ) : (
+        <div className="grid" style={{ gridTemplateColumns: "320px 1fr", alignItems: "start" }}>
+          <section className="card">
+            <div className="cardHeader" style={{ fontWeight: 900 }}>Book customer</div>
+            <form className="cardBody grid" onSubmit={book}>
+              <div style={{ position: "relative" }}>
+                <input
+                  className="formField"
+                  value={customerQuery}
+                  onChange={(e) => {
+                    setCustomerQuery(e.target.value);
+                    setCustomerId("");
+                    setCustomerListOpen(true);
+                  }}
+                  onFocus={() => setCustomerListOpen(true)}
+                  onBlur={() => setTimeout(() => setCustomerListOpen(false), 150)}
+                  placeholder="Search customers by name, email or phone…"
+                  required={!customerId}
+                />
+                {customerId && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={clearCustomerSelection}
+                    style={{ position: "absolute", right: 4, top: 4, bottom: 4, padding: "0 10px" }}
+                  >
+                    Clear
+                  </button>
+                )}
+                {customerListOpen && !customerId && (
+                  <div
+                    className="card"
+                    style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 10, maxHeight: 260, overflowY: "auto", marginTop: 4 }}
+                  >
+                    {matchingCustomers.length === 0 ? (
+                      <div className="cardBody muted">No customers found</div>
+                    ) : (
+                      matchingCustomers.map((c) => (
+                        <div
+                          key={c.id}
+                          className="cardBody"
+                          style={{ cursor: "pointer", padding: "8px 12px", borderTop: "1px solid var(--border)" }}
+                          onMouseDown={() => selectCustomer(c)}
+                        >
+                          <div style={{ fontWeight: 700 }}>{c.name}</div>
+                          <div className="muted" style={{ fontSize: 12 }}>
+                            {[c.email, c.phone].filter(Boolean).join(" · ") || "No contact info"}
+                            {c.latest_deal?.treatment_interest ? ` · ${c.latest_deal.treatment_interest}` : ""}
+                          </div>
                         </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-            <select className="formField" value={day} onChange={(e) => setDay(e.target.value)}>
-              {event.days.map((d) => <option key={d.id} value={d.day}>{d.label || d.day}</option>)}
-            </select>
-            <select className="formField" value={time} onChange={(e) => setTime(e.target.value)}>
-              {selectableSlots.map((slot) => <option key={slot} value={slot}>{slot}</option>)}
-            </select>
-            <textarea className="formField" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" />
-            {selectedCustomer && <WhatsAppQuickAction customer={selectedCustomer} />}
-            <button className="btn btnPrimary" type="submit">Place in timetable</button>
-          </form>
-        </section>
-
-        <section className="card">
-          <div className="cardHeader" style={{ display: "flex", justifyContent: "space-between" }}>
-            <b>Timetable</b>
-            <span className="muted">{event.location || "No location"} · capacity {event.slot_capacity || 1}/slot</span>
-          </div>
-          <div className="cardBody grid">
-            {event.days.map((d) => {
-              const appts = appointments.filter((a) => a.starts_at.slice(0, 10) === d.day);
-              const capacity = event.slot_capacity || 1;
-              return (
-                <div key={d.id} className="card" style={{ boxShadow: "none" }}>
-                  <div className="cardHeader"><b>{d.label || d.day}</b> <span className="muted">{d.start_time.slice(0,5)}–{d.end_time.slice(0,5)} / {d.slot_minutes} min</span></div>
-                  <div className="cardBody">
-                    <table className="table">
-                      <tbody>
-                        {slots(d.day, d.start_time, d.end_time, d.slot_minutes).map((t) => {
-                          const booked = appts.filter((a) => a.starts_at.slice(11, 16) === t);
-                          const full = booked.length >= capacity;
-                          return (
-                            <tr key={`${d.day}-${t}`} style={{ background: booked.length ? "rgba(30,103,150,0.06)" : undefined }}>
-                              <td style={{ width: 90, fontWeight: 700 }}>{t}</td>
-                              <td>
-                                <div className="muted" style={{ fontSize: 12, marginBottom: booked.length ? 6 : 0 }}>{booked.length}/{capacity} {full ? "Full" : "Booked"}</div>
-                                {booked.length ? booked.map((appt) => (
-                                  <div key={appt.id} style={{ padding: "6px 0", borderTop: "1px solid var(--border)" }}>
-                                    <b>{appt.customer_name}</b>
-                                    <div className="muted">{appt.deal_treatment_interest || appt.appointment_type} · {appt.status}</div>
-                                    {appt.notes && <div>{appt.notes}</div>}
-                                  </div>
-                                )) : <span className="muted">Available</span>}
-                              </td>
-                              <td style={{ width: 120 }}>
-                                {booked.map((appt) => <button key={appt.id} className="btn" onClick={() => void remove(appt)} style={{ marginBottom: 4 }}>Remove</button>)}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                      ))
+                    )}
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      </div>
+                )}
+              </div>
+              <select className="formField" value={day} onChange={(e) => setDay(e.target.value)}>
+                {event.days.map((d) => <option key={d.id} value={d.day}>{d.label || d.day}</option>)}
+              </select>
+              <select className="formField" value={time} onChange={(e) => setTime(e.target.value)}>
+                {selectableSlots.map((slot) => <option key={slot} value={slot}>{slot}</option>)}
+              </select>
+              <textarea className="formField" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" />
+              {selectedCustomer && <WhatsAppQuickAction customer={selectedCustomer} />}
+              <button className="btn btnPrimary" type="submit">Place in timetable</button>
+            </form>
+          </section>
+
+          <section className="card">
+            <div className="cardHeader" style={{ display: "flex", justifyContent: "space-between" }}>
+              <b>Timetable</b>
+              <span className="muted">{event.location || "No location"} · capacity {event.slot_capacity || 1}/slot</span>
+            </div>
+            <div className="cardBody grid">
+              {event.days.map((d) => {
+                const appts = appointments.filter((a) => a.starts_at.slice(0, 10) === d.day);
+                const capacity = event.slot_capacity || 1;
+                return (
+                  <div key={d.id} className="card" style={{ boxShadow: "none" }}>
+                    <div className="cardHeader"><b>{d.label || d.day}</b> <span className="muted">{d.start_time.slice(0,5)}–{d.end_time.slice(0,5)} / {d.slot_minutes} min</span></div>
+                    <div className="cardBody">
+                      <table className="table">
+                        <tbody>
+                          {slots(d.day, d.start_time, d.end_time, d.slot_minutes).map((t) => {
+                            const booked = appts.filter((a) => a.starts_at.slice(11, 16) === t);
+                            const full = booked.length >= capacity;
+                            return (
+                              <tr key={`${d.day}-${t}`} style={{ background: booked.length ? "rgba(30,103,150,0.06)" : undefined }}>
+                                <td style={{ width: 90, fontWeight: 700 }}>{t}</td>
+                                <td>
+                                  <div className="muted" style={{ fontSize: 12, marginBottom: booked.length ? 6 : 0 }}>{booked.length}/{capacity} {full ? "Full" : "Booked"}</div>
+                                  {booked.length ? booked.map((appt) => (
+                                    <div key={appt.id} style={{ padding: "6px 0", borderTop: "1px solid var(--border)" }}>
+                                      <b>{appt.customer_name}</b>
+                                      <div className="muted">{appt.deal_treatment_interest || appt.appointment_type} · {appt.status}</div>
+                                      {appt.notes && <div>{appt.notes}</div>}
+                                    </div>
+                                  )) : <span className="muted">Available</span>}
+                                </td>
+                                <td style={{ width: 120 }}>
+                                  {booked.map((appt) => <button key={appt.id} className="btn" onClick={() => void remove(appt)} style={{ marginBottom: 4 }}>Remove</button>)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
