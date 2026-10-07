@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.schemas.deal import DealOut
 
@@ -54,6 +54,17 @@ class CustomerUpdate(BaseModel):
     adset_name: str | None = Field(default=None, max_length=250)
     ad_id: str | None = Field(default=None, max_length=120)
     ad_name: str | None = Field(default=None, max_length=250)
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, v: str | None) -> str:
+        # Only runs when "name" is sent; the column is NOT NULL, so null/blank is never valid.
+        name = (v or "").strip()
+        if not name:
+            raise ValueError("Name cannot be empty")
+        if len(name) > 200:
+            raise ValueError("Name must be at most 200 characters")
+        return name
 
 
 class CustomerOut(BaseModel):

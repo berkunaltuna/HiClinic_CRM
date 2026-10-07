@@ -23,6 +23,9 @@ export default function ContactDetailPage() {
   const [busy, setBusy] = useState(true);
   const [note, setNote] = useState("");
   const [showMerge, setShowMerge] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
 
   const [emailSubject, setEmailSubject] = useState("Hi {{customer_name}}");
   const [emailBody, setEmailBody] = useState("");
@@ -57,6 +60,36 @@ export default function ContactDetailPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  function startEditName() {
+    if (!c) return;
+    setNameDraft(c.name);
+    setEditingName(true);
+  }
+
+  async function saveName() {
+    if (!c) return;
+    const name = nameDraft.trim();
+    if (!name) {
+      toast.push("Name cannot be empty", "error");
+      return;
+    }
+    if (name === c.name) {
+      setEditingName(false);
+      return;
+    }
+    setSavingName(true);
+    try {
+      const updated = await apiFetch<CustomerOut>(`/customers/${id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+      setC(updated);
+      setEditingName(false);
+      toast.push("Name updated");
+    } catch (err: any) {
+      toast.push(err?.message || "Failed to update name", "error");
+    } finally {
+      setSavingName(false);
+    }
+  }
 
   async function setStage(stage: string) {
     try {
@@ -179,9 +212,33 @@ export default function ContactDetailPage() {
         <div className="split">
           <section className="stack">
             <div className="card">
-              <div className="cardHeader" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <div style={{ fontWeight: 900, fontSize: 16 }}>{c.name}</div>
+              <div className="cardHeader" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {editingName ? (
+                    <form
+                      style={{ display: "flex", gap: 8, alignItems: "center" }}
+                      onSubmit={(e) => { e.preventDefault(); void saveName(); }}
+                    >
+                      <input
+                        className="formField"
+                        value={nameDraft}
+                        onChange={(e) => setNameDraft(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Escape") setEditingName(false); }}
+                        maxLength={200}
+                        aria-label="Full name"
+                        autoFocus
+                        required
+                        style={{ flex: 1, fontWeight: 700 }}
+                      />
+                      <button className="btn btnPrimary" type="submit" disabled={savingName || !nameDraft.trim()}>{savingName ? "Saving…" : "Save"}</button>
+                      <button className="btn" type="button" onClick={() => setEditingName(false)} disabled={savingName}>Cancel</button>
+                    </form>
+                  ) : (
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <div style={{ fontWeight: 900, fontSize: 16 }}>{c.name}</div>
+                      <button className="btn btnPrimary" type="button" onClick={startEditName} title="Edit full name" style={{ padding: "4px 10px", fontSize: 12 }}>Edit name</button>
+                    </div>
+                  )}
                   <div className="muted" style={{ fontSize: 12 }}>{c.company || "—"}</div>
                 </div>
                 <span className="badge">{c.stage}</span>

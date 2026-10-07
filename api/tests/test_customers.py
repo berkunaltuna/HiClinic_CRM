@@ -64,3 +64,18 @@ def test_customer_ownership_enforced(client):
     # B should not access A's customer
     r = client.get(f"/customers/{customer_id}", headers=headers_b)
     assert r.status_code in (403, 404), r.text
+
+
+def test_customer_rename(client, auth_headers):
+    r = client.post("/customers", json={"name": "jane smth"}, headers=auth_headers)
+    assert r.status_code == 201, r.text
+    customer_id = r.json()["id"]
+
+    r = client.patch(f"/customers/{customer_id}", json={"name": "  Jane Smith  "}, headers=auth_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "Jane Smith"
+
+    for bad in ("", "   ", None):
+        r = client.patch(f"/customers/{customer_id}", json={"name": bad}, headers=auth_headers)
+        assert r.status_code == 422, (bad, r.text)
+    assert client.get(f"/customers/{customer_id}", headers=auth_headers).json()["name"] == "Jane Smith"
