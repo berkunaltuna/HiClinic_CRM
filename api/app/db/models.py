@@ -452,6 +452,12 @@ class FacebookLeadEvent(Base):
     ad_name = sa.Column(sa.String(250))
     form_name = sa.Column(sa.String(250))
 
+    # Which platform delivered this submission ('facebook' | 'google'). Despite
+    # the table name, every ad-platform lead submission is recorded here.
+    source = sa.Column(sa.String(40), nullable=False, server_default="facebook")
+    gclid = sa.Column(sa.String(500))
+    is_test = sa.Column(sa.Boolean(), nullable=False, server_default=sa.false())
+
     customer_id = sa.Column(
         sa.UUID(as_uuid=True),
         sa.ForeignKey("customers.id", ondelete="SET NULL"),

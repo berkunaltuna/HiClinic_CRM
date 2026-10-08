@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 import httpx
@@ -365,7 +365,18 @@ def _ingest_graph_style_lead(
     interaction_subject: str,
     source_tags: tuple[str, ...] = ("facebook", "facebook_lead"),
     fallback_name_prefix: str = "Facebook Lead",
+    find_customer: Callable[[Session, User, str | None, str | None], Customer | None] | None = None,
+    keep_existing_attribution: bool = False,
+    summary_extra: dict[str, Any] | None = None,
+    event_extra: dict[str, Any] | None = None,
 ) -> None:
+    """Shared lead ingestion. The keyword defaults reproduce the Facebook/Make
+    behaviour exactly; other sources (Google Ads) override them.
+
+    keep_existing_attribution: when True, an existing customer that already has
+    a lead_source keeps its original acquisition attribution untouched instead
+    of having blank fields back-filled from this (different) submission.
+    """
     existing_event = db.query(FacebookLeadEvent).filter(FacebookLeadEvent.leadgen_id == lead_id).first()
     if existing_event is not None:
         return
@@ -421,7 +432,10 @@ def _ingest_graph_style_lead(
     # instead of "whenever this webhook happened to be processed".
     submitted_at = _parse_lead_submitted_at(lead.get("created_time"))
 
-    customer = _find_existing_customer(db, owner.id, email=email, phone=phone)
+    if find_customer is None:
+        customer = _find_existing_customer(db, owner.id, email=email, phone=phone)
+    else:
+        customer = find_customer(db, owner, email, phone)
     is_new_customer = customer is None
     if customer is None:
         customer = Customer(
@@ -455,7 +469,8 @@ def _ingest_graph_style_lead(
             customer.phone = phone
         if company and not customer.company:
             customer.company = company
-    for attr_key, attr_value in attribution.items():
+    preserve_attribution = keep_existing_attribution and not is_new_customer and bool(customer.lead_source)
+    for attr_key, attr_value in ([] if preserve_attribution else attribution.items()):
         if attr_value and not getattr(customer, attr_key, None):
             setattr(customer, attr_key, attr_value)
 
@@ -503,6 +518,7 @@ def _ingest_graph_style_lead(
         customer_id=customer.id,
         deal_id=deal.id if deal is not None else None,
         raw_payload=raw_payload,
+        **(event_extra or {}),
     )
     db.add(event)
 
@@ -518,6 +534,8 @@ def _ingest_graph_style_lead(
         "preferred_consultation_day": preferred_consultation_day,
         "seminar_preference": seminar_preference,
     }
+    if summary_extra:
+        summary.update(summary_extra)
     # Treat new Facebook/Make lead submissions as inbound activity. This also
     # cancels any queued outreach marked cancel_on_inbound for returning leads.
     db.query(OutboundMessage).filter(

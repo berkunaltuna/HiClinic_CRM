@@ -88,7 +88,8 @@ def test_meta_lead_webhook_creates_customer_deal_and_dedupes(client, db, token, 
     assert customer is not None
     assert customer.name == "Jane Doe"
     assert customer.phone == "+447700900123"
-    assert customer.stage == "contacted"
+    # New leads stay in "new" until a user moves them (604d363).
+    assert customer.stage == "new"
     assert {"facebook", "facebook_lead", "new_lead"}.issubset(set(customer.tag_names))
 
     deal = db.query(Deal).filter(Deal.customer_id == customer.id).first()

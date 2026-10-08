@@ -25,12 +25,16 @@ def get_or_create_tag(db: Session, *, owner_user_id, name: str, color: str | Non
     if tag:
         return tag
 
-    tag = Tag(owner_user_id=owner_user_id, name=clean, color=color)
-    db.add(tag)
+    # Flush the caller's pending rows first so their errors surface to the
+    # caller instead of being mistaken for a tag-creation race below.
+    db.flush()
     try:
-        db.flush()
+        # Savepoint, so losing a creation race only undoes this tag insert and
+        # not the caller's whole in-progress transaction (e.g. a new lead).
+        with db.begin_nested():
+            tag = Tag(owner_user_id=owner_user_id, name=clean, color=color)
+            db.add(tag)
     except IntegrityError:
-        db.rollback()
         # concurrent creation - retry
         tag = (
             db.query(Tag)

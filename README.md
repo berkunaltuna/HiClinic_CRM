@@ -468,21 +468,24 @@ Suggested Make request body:
 
 ## Google Ads lead form webhook
 
-Google Ads lead forms can POST each submission straight to the CRM:
+Scope: this receives submissions from **Google Ads' built-in lead form assets** only (the form Google shows inside the ad). Forms on our own website/WordPress landing pages do not come through here.
 
 - `POST /webhooks/google/ads-lead`
 
-Each lead creates or updates the customer (matched by phone, then email), opens a deal if needed, logs a **Google Ads Lead Form submission** interaction, sets `lead_source=google` and tags the customer with `google` and `google_ads_lead`. Campaign, ad group and creative IDs are stored as campaign/adset/ad attribution. Custom questions are matched by question text, so a "Which treatment are you interested in?" question populates the deal's treatment interest just like the Facebook forms. Deliveries are deduplicated by `lead_id` (stored as `google:<lead_id>` in `facebook_lead_events`), so Google's retries are safe.
+What a submission does:
 
-Env vars:
+- Validates `google_key` against `GOOGLE_ADS_WEBHOOK_KEY` before touching the database (403 if missing/wrong; 503 if the env var is unset, so Google keeps retrying until it is configured).
+- Deduplicates on Google's `lead_id` (stored as `google:<lead_id>` in `facebook_lead_events`, unique). Replays and concurrent duplicate deliveries record one submission; a failed delivery writes nothing, so Google's retry starts clean.
+- Matches an existing customer by phone, then email, across all users when `SHARE_CUSTOMERS_ACROSS_USERS=true` (same matcher as the Excel importer). Otherwise creates a customer in stage **new** with `lead_source=google`.
+- Existing customers keep their stage, name, original `lead_source`/campaign attribution and existing deal treatment. The Google submission is recorded separately: a lead event row (`source=google`, `gclid`, `is_test`), an interaction "Google Ads Lead Form submission" whose content holds `lead_id`, `form_id`, `campaign_id`, `adgroup_id`, `creative_id`, `asset_group_id`, `gcl_id`, `lead_stage`, and the answers, plus additive tags (`google`, `google_ads_lead`, treatment tags).
+- Field mapping: `FULL_NAME` (or `FIRST_NAME` + `LAST_NAME`), `EMAIL`/`WORK_EMAIL`, `PHONE_NUMBER`/`WORK_PHONE`, `COMPANY_NAME`. Custom questions match on question text or `column_id`, so a question like "Which treatment are you interested in?" fills the deal's treatment interest. Phones go through the same `normalise_phone()` as Facebook/Excel: numbers without a leading `+` are assumed to be `DEFAULT_COUNTRY_CODE`.
+- Test leads (`is_test: true`, from **Send test data**): when accepted they always create a separate customer named `[TEST] …`, tagged `test_lead`, never merged into a real customer. Deleting that customer and sending test data again creates a fresh one.
 
-- `GOOGLE_ADS_WEBHOOK_KEY` (required) — any long random string; the endpoint returns 503 until it is set
-- `GOOGLE_ADS_ACCEPT_TEST_LEADS` (default `true`) — ingest "Send test data" leads, tagged `test_lead`; set `false` once the hookup is verified
+Env vars (read from `.env` via the api service's `env_file`):
 
-Setup in Google Ads:
+- `GOOGLE_ADS_WEBHOOK_KEY` (required) — long random string, e.g. `openssl rand -hex 32`
+- `GOOGLE_ADS_ACCEPT_TEST_LEADS` (default `true`) — set `false` to acknowledge test leads with 200 but write nothing
 
-1. Open the campaign → **Assets** → the lead form asset → edit.
-2. Under **Lead delivery options** → **Webhook integration**, set the URL to `https://<your-domain>/webhooks/google/ads-lead` and the key to your `GOOGLE_ADS_WEBHOOK_KEY`.
-3. Click **Send test data** — a customer tagged `google` + `test_lead` should appear in the CRM. Delete it afterwards.
+Leads are owned by `FACEBOOK_DEFAULT_OWNER_USER_ID` (or the newest user if unset).
 
-Google's payload only carries IDs (not campaign/ad group names); the names stay blank unless you add them later.
+Setup in Google Ads: campaign → **Assets** → lead form → **Lead delivery options** → **Webhook integration**; Webhook URL `https://<public-api-host>/webhooks/google/ads-lead`, Key = `GOOGLE_ADS_WEBHOOK_KEY`; click **Send test data**.
