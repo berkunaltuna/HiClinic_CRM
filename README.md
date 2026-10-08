@@ -465,3 +465,24 @@ Suggested Make request body:
 ```
 
 `created_time` should be mapped from the Facebook Lead Ads trigger module's **Date created** output field. Without it, the CRM falls back to stamping `created_at` at the moment the webhook is processed, which can put leads out of chronological order if Make delivers them out of submission order (batching, retries, scenario re-runs).
+
+## Google Ads lead form webhook
+
+Google Ads lead forms can POST each submission straight to the CRM:
+
+- `POST /webhooks/google/ads-lead`
+
+Each lead creates or updates the customer (matched by phone, then email), opens a deal if needed, logs a **Google Ads Lead Form submission** interaction, sets `lead_source=google` and tags the customer with `google` and `google_ads_lead`. Campaign, ad group and creative IDs are stored as campaign/adset/ad attribution. Custom questions are matched by question text, so a "Which treatment are you interested in?" question populates the deal's treatment interest just like the Facebook forms. Deliveries are deduplicated by `lead_id` (stored as `google:<lead_id>` in `facebook_lead_events`), so Google's retries are safe.
+
+Env vars:
+
+- `GOOGLE_ADS_WEBHOOK_KEY` (required) — any long random string; the endpoint returns 503 until it is set
+- `GOOGLE_ADS_ACCEPT_TEST_LEADS` (default `true`) — ingest "Send test data" leads, tagged `test_lead`; set `false` once the hookup is verified
+
+Setup in Google Ads:
+
+1. Open the campaign → **Assets** → the lead form asset → edit.
+2. Under **Lead delivery options** → **Webhook integration**, set the URL to `https://<your-domain>/webhooks/google/ads-lead` and the key to your `GOOGLE_ADS_WEBHOOK_KEY`.
+3. Click **Send test data** — a customer tagged `google` + `test_lead` should appear in the CRM. Delete it afterwards.
+
+Google's payload only carries IDs (not campaign/ad group names); the names stay blank unless you add them later.

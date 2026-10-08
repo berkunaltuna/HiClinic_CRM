@@ -363,6 +363,8 @@ def _ingest_graph_style_lead(
     owner: User,
     raw_payload: dict[str, Any],
     interaction_subject: str,
+    source_tags: tuple[str, ...] = ("facebook", "facebook_lead"),
+    fallback_name_prefix: str = "Facebook Lead",
 ) -> None:
     existing_event = db.query(FacebookLeadEvent).filter(FacebookLeadEvent.leadgen_id == lead_id).first()
     if existing_event is not None:
@@ -424,7 +426,7 @@ def _ingest_graph_style_lead(
     if customer is None:
         customer = Customer(
             owner_user_id=owner.id,
-            name=full_name or phone or email or f"Facebook Lead {lead_id}",
+            name=full_name or phone or email or f"{fallback_name_prefix} {lead_id}",
             email=email,
             phone=phone,
             company=company,
@@ -445,7 +447,7 @@ def _ingest_graph_style_lead(
         db.add(customer)
         db.flush()
     else:
-        if full_name and (not customer.name or customer.name.startswith("Facebook Lead")):
+        if full_name and (not customer.name or customer.name.startswith(fallback_name_prefix)):
             customer.name = full_name
         if email and not customer.email:
             customer.email = email
@@ -540,8 +542,8 @@ def _ingest_graph_style_lead(
         interaction.occurred_at = submitted_at
     db.add(interaction)
 
-    add_tag_to_customer(db, customer=customer, tag_name="facebook")
-    add_tag_to_customer(db, customer=customer, tag_name="facebook_lead")
+    for tag_name in source_tags:
+        add_tag_to_customer(db, customer=customer, tag_name=tag_name)
     if is_new_customer:
         add_tag_to_customer(db, customer=customer, tag_name="new_lead")
     if treatment_interest:

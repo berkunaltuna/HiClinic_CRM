@@ -78,6 +78,13 @@ class Settings:
 
     make_webhook_secret: str | None = os.getenv("MAKE_WEBHOOK_SECRET")
 
+    # Google Ads lead form webhook ingestion. The key is set on the lead form
+    # in Google Ads and sent back in every payload as google_key.
+    google_ads_webhook_key: str | None = os.getenv("GOOGLE_ADS_WEBHOOK_KEY")
+    # "Send test data" in Google Ads posts is_test=true leads; ingest them
+    # (tagged test_lead) so the hookup can be verified end to end.
+    google_ads_accept_test_leads: bool = _get_bool("GOOGLE_ADS_ACCEPT_TEST_LEADS", True)
+
     # WhatsApp Cloud API webhook ingestion
     whatsapp_verify_token: str = os.getenv("WHATSAPP_VERIFY_TOKEN", "berk-whatsapp-verify")
     whatsapp_app_secret: str | None = os.getenv("WHATSAPP_APP_SECRET")
