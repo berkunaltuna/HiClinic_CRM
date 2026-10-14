@@ -78,6 +78,30 @@ def _render_text(text_tpl: str, context: Mapping[str, Any]) -> str:
     return _TOKEN_RE.sub(repl, text_tpl)
 
 
+# Plain-text email formatting. Identical copy of api/app/services/message_format.py
+# (the worker image doesn't include the API package); change both together.
+_HTML_TAG_RE = re.compile(r"<\s*/?\s*(p|br|b|strong|i|em|u|a|div|span|ul|ol|li|h[1-6]|table|tr|td|img)\b[^>]*>", re.IGNORECASE)
+_BOLD_RE = re.compile(r"\*(\S(?:[^*\n]*?\S)?)\*")
+_URL_RE = re.compile(r"(https?://[^\s<]+[^\s<.,;:!?)\]'\"])")
+
+
+def _looks_like_html(text: str | None) -> bool:
+    return bool(_HTML_TAG_RE.search(text or ""))
+
+
+def _text_to_html(text: str) -> str:
+    import html as _html
+
+    paragraphs = [p for p in re.split(r"\n\s*\n", (text or "").replace("\r\n", "\n").strip()) if p.strip()]
+    out = []
+    for para in paragraphs:
+        safe = _html.escape(para.strip(), quote=False)
+        safe = _URL_RE.sub(r'<a href="\1">\1</a>', safe)
+        safe = _BOLD_RE.sub(r"<b>\1</b>", safe)
+        out.append("<p>" + safe.replace("\n", "<br>") + "</p>")
+    return '<div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1f2937">' + "".join(out) + "</div>"
+
+
 def _strip_html_fallback(html: str) -> str:
     import re
 
@@ -267,15 +291,18 @@ def process_once(engine: Engine) -> int:
 
                 variables = row["variables"] or {}
                 subject = _render_text(str(tpl.get("subject") or ""), {**base_ctx, **variables}).strip()
-                body_html = _render_text(str(tpl.get("body") or ""), {**base_ctx, **variables}).strip()
+                body_src = str(tpl.get("body") or "")
+                rendered = _render_text(body_src, {**base_ctx, **variables}).strip()
                 if not subject:
                     raise RuntimeError("Rendered subject is empty")
-                if not body_html:
+                if not rendered:
                     raise RuntimeError("Rendered body is empty")
+                # Plain-text templates are laid out as HTML here; HTML templates go as-is.
+                body_html = rendered if _looks_like_html(body_src) else _text_to_html(rendered)
 
                 provider_sid = _send_email(to_email=to_email, subject=subject, body_html=body_html)
                 interaction_subject = subject
-                interaction_content = body_html
+                interaction_content = rendered
 
             else:
                 raise RuntimeError(f"Unsupported channel: {channel}")

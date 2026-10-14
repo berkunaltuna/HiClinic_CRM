@@ -67,11 +67,9 @@ class Customer(Base):
     can_contact = sa.Column(sa.Boolean(), nullable=False, server_default=sa.text('true'))
     language = sa.Column(sa.String(10))
 
-    # Per-channel messaging permission. NULL means "not recorded" and is treated
-    # as no permission by the messaging automations; a phone number on file is
-    # never taken as WhatsApp consent. can_contact=false is a global opt-out.
-    email_consent = sa.Column(sa.Boolean(), nullable=True)
-    whatsapp_consent = sa.Column(sa.Boolean(), nullable=True)
+    # Contact details left on a lead form count as permission to email/WhatsApp;
+    # can_contact=false is the opt-out (e.g. the patient replied STOP).
+    # consent_source holds staff's note on the opt-out; consent_updated_at when it changed.
     consent_source = sa.Column(sa.String(200))
     consent_updated_at = sa.Column(sa.DateTime(timezone=True))
 

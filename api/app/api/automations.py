@@ -80,9 +80,6 @@ def _global_warnings(db: Session) -> list[str]:
         warnings.append(f"EMAIL_PROVIDER is '{settings.email_provider}', so emails are not really delivered.")
     if not (settings.twilio_account_sid and settings.twilio_auth_token and settings.twilio_whatsapp_from):
         warnings.append("Twilio WhatsApp credentials (TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_WHATSAPP_FROM) are not set, so WhatsApp sends will fail.")
-    for channel, column in (("email", Customer.email_consent), ("WhatsApp", Customer.whatsapp_consent)):
-        if db.query(Customer.id).filter(column.is_(True)).first() is None:
-            warnings.append(f"No patient has {channel} consent recorded yet. Nothing is sent on {channel} until consent is recorded on the contact page.")
     return warnings
 
 

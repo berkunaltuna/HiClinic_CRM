@@ -13,6 +13,8 @@ from app.db.session import get_db
 from app.schemas.email import ConfirmationEmailRequest, EmailSendOut, EmailSendRequest, TemplatePreviewOut
 from app.services.audit import record_audit
 from app.services.email_provider import get_email_provider
+from app.services.message_format import looks_like_html, text_to_html
+from app.services import messaging_automations as ma
 from app.services.template_render import render_template
 
 router = APIRouter(prefix="/customers", tags=["email"])
@@ -95,9 +97,18 @@ def _context_for_customer(db: Session, customer: Customer, appointment_id: UUID 
             if line.lower().startswith("doctor:"):
                 doctor_name = line.split(":", 1)[1].strip()
                 break
+    clinic = ma.get_clinic_settings(db)
+    start_local = ma._uk_local(ma._wall_clock(appt.starts_at)) if appt is not None else None
     return {
         "customer_name": customer.name or "",
+        "first_name": (customer.name or "").split()[0] if (customer.name or "").strip() else "",
         "name": customer.name or "",
+        "appointment_end_time": _fmt_time(appt.ends_at if appt else None),
+        "appointment_timezone": f"UK time, {start_local.tzname()}" if start_local is not None else "",
+        "appointment_location": event.location if event and event.location else "",
+        "clinic_name": clinic.clinic_name or "Health Clinic",
+        "clinic_phone": clinic.contact_phone or "",
+        "clinic_email": clinic.contact_email or "",
         "company": customer.company or "",
         "customer_email": customer.email or "",
         "customer_phone": customer.phone or "",
@@ -113,7 +124,9 @@ def _context_for_customer(db: Session, customer: Customer, appointment_id: UUID 
     }
 
 
-def _send_rendered_email(db: Session, user: User, customer: Customer, subject: str, body: str) -> tuple[str, Interaction]:
+def _send_rendered_email(db: Session, user: User, customer: Customer, subject: str, body: str, *, source: str | None = None) -> tuple[str, Interaction]:
+    """Send an email. Plain-text bodies (judged on the unrendered source) are formatted
+    as HTML for the inbox; the CRM thread keeps the readable text."""
     if not customer.can_contact:
         raise HTTPException(status_code=403, detail="Customer cannot be contacted")
     if not customer.email:
@@ -121,8 +134,9 @@ def _send_rendered_email(db: Session, user: User, customer: Customer, subject: s
     if not subject.strip() or not body.strip():
         raise HTTPException(status_code=400, detail="subject and body are required")
 
+    html_body = body if looks_like_html(source if source is not None else body) else text_to_html(body)
     provider = _get_email_provider()
-    provider_message_id = provider.send_email(to_email=customer.email, subject=subject, body=body)
+    provider_message_id = provider.send_email(to_email=customer.email, subject=subject, body=html_body)
     interaction = Interaction(
         customer_id=customer.id,
         owner_user_id=user.id,
@@ -153,11 +167,13 @@ def send_email(
             raise HTTPException(status_code=403, detail="Customer cannot be contacted for marketing")
         rendered = render_template(subject=tpl.subject, body=tpl.body, context=context)
         rendered_subject, rendered_body = rendered.subject or "", rendered.body
+        source = tpl.body
     else:
         rendered = render_template(subject=payload.subject or "", body=payload.body or "", context=context)
         rendered_subject, rendered_body = rendered.subject or "", rendered.body
+        source = payload.body or ""
 
-    provider_message_id, interaction = _send_rendered_email(db, user, customer, rendered_subject, rendered_body)
+    provider_message_id, interaction = _send_rendered_email(db, user, customer, rendered_subject, rendered_body, source=source)
     record_audit(db, actor=user, action="email.sent", entity_type="customer", entity_id=customer.id, after={"subject": rendered_subject}, metadata={"customer_id": str(customer.id), "customer_name": customer.name})
     db.commit()
     db.refresh(interaction)
@@ -196,11 +212,13 @@ def send_confirmation_email(
         template_id = tpl.id
         rendered = render_template(subject=tpl.subject, body=tpl.body, context=context)
         subject, body = rendered.subject or "", rendered.body
+        source = tpl.body
     else:
         rendered = render_template(subject=payload.subject or "", body=payload.body or "", context=context)
         subject, body = rendered.subject or "", rendered.body
+        source = payload.body or ""
 
-    provider_message_id, interaction = _send_rendered_email(db, user, customer, subject, body)
+    provider_message_id, interaction = _send_rendered_email(db, user, customer, subject, body, source=source)
     deal = _latest_deal(customer)
     if deal is not None:
         deal.confirmation_sent_at = datetime.now(timezone.utc)

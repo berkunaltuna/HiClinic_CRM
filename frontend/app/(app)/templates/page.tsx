@@ -5,6 +5,7 @@ import { Topbar } from "@/components/Topbar";
 import { apiFetch, ApiError } from "@/lib/api";
 import type { TemplateOut } from "@/lib/types";
 import { useToast } from "@/components/Toast";
+import { MessageEditor } from "@/components/MessageEditor";
 
 type MeOut = {
   id: string;
@@ -18,6 +19,21 @@ type TemplateCategory = "transactional" | "marketing";
 const DEFAULT_CHANNEL: TemplateChannel = "email";
 const DEFAULT_CATEGORY: TemplateCategory = "transactional";
 const DEFAULT_LANGUAGE = "en";
+// Fields filled in by manual sends from a contact and by the messaging automations.
+const TEMPLATE_FIELDS = [
+  "first_name",
+  "customer_name",
+  "appointment_date",
+  "appointment_time",
+  "appointment_end_time",
+  "appointment_timezone",
+  "appointment_location",
+  "event_name",
+  "clinic_name",
+  "clinic_phone",
+  "clinic_email",
+];
+
 const DEFAULT_SUBJECT = "Hi {{customer_name}}";
 const DEFAULT_BODY =
   "Hello {{customer_name}},\n\nThanks for reaching out.\n\nKind regards,\nHiClinic";
@@ -289,17 +305,17 @@ export default function TemplatesPage() {
                 <div className="muted" style={{ fontSize: 12 }}>
                   Body
                 </div>
-                <textarea
-                  rows={8}
+                <MessageEditor
                   value={newBody}
-                  onChange={(e) => setNewBody(e.target.value)}
+                  onChange={setNewBody}
+                  channel={newChannel}
+                  fields={TEMPLATE_FIELDS}
                 />
                 <div
                   className="muted"
                   style={{ fontSize: 12, marginTop: 6 }}
                 >
-                  Tip: use merge fields like <b>{"{{customer_name}}"}</b> and{" "}
-                  <b>{"{{company}}"}</b>
+                  Write it as normal text. Emails are laid out automatically when they&apos;re sent.
                 </div>
               </div>
 

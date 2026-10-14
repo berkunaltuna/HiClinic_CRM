@@ -49,6 +49,7 @@ from app.db.models import (
 from app.services.appointment_rules import validate_appointment_slot
 from app.services.audit import record_audit
 from app.services.automation import enqueue_outbound_message
+from app.services.message_format import looks_like_html, text_to_html
 from app.services.template_render import _TOKEN_RE, render_text
 
 logger = logging.getLogger(__name__)
@@ -201,17 +202,14 @@ _CHANNEL_LABEL = {"email": "Email", "whatsapp": "WhatsApp"}
 
 def channel_block_reason(customer: Customer, channel: str) -> str | None:
     """Why this patient can't be messaged on this channel, or None if they can."""
-    label = _CHANNEL_LABEL[channel]
+    # Contact details left on a lead form count as permission; the opt-out is can_contact.
     if customer.can_contact is False:
         return "Patient has opted out of contact"
-    consent = customer.email_consent if channel == "email" else customer.whatsapp_consent
-    if consent is None:
-        return f"No {label} consent recorded for this patient"
-    if consent is False:
-        return f"Patient has not given {label} consent"
-    if channel == "email" and not is_valid_email(customer.email):
-        return "No valid email address on file"
-    if channel == "whatsapp" and normalise_whatsapp_number(customer.phone) is None:
+    if channel == "email":
+        if not is_valid_email(customer.email):
+            return "No valid email address on file"
+        return None
+    if normalise_whatsapp_number(customer.phone) is None:
         return "No valid WhatsApp number on file (use international format, e.g. +44...)"
     return None
 
@@ -382,10 +380,15 @@ def render_for_channel(
         subject = render_text(subject_src or "", context).strip()
         if not subject:
             return None, f"Email template '{tpl.name}' has no subject"
-        # The worker renders the HTML body from these variables, so escape them.
-        escaped = {k: html.escape(str(context[k]), quote=False) for k in tokens}
-        body = render_text(tpl.body, escaped)
-        return Rendered(tpl.id, subject, body, tpl.id, None, escaped), None
+        if looks_like_html(tpl.body):
+            # Older HTML template: the worker drops these variables straight into HTML, so escape them.
+            variables = {k: html.escape(str(context[k]), quote=False) for k in tokens}
+            body = render_text(tpl.body, variables)
+        else:
+            # Plain-text template: the worker formats it as HTML (and escapes it) at send time.
+            variables = {k: str(context[k]) for k in tokens}
+            body = text_to_html(render_text(tpl.body, variables))
+        return Rendered(tpl.id, subject, body, tpl.id, None, variables), None
 
     body = render_text(tpl.body, context).strip()
     if tpl.provider_template_id:

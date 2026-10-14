@@ -7,33 +7,20 @@ import { fmtDateTime } from "@/lib/dates";
 import { useToast } from "@/components/Toast";
 import { AutomationSendStatus, automationLabel, slotText } from "@/components/AutomationSendStatus";
 
-type ConsentValue = "" | "yes" | "no";
-
-const toValue = (v: boolean | null): ConsentValue => (v === true ? "yes" : v === false ? "no" : "");
-const fromValue = (v: ConsentValue): boolean | null => (v === "yes" ? true : v === "no" ? false : null);
-
 export function ContactPermissionsCard({ customer, onSaved }: { customer: CustomerOut; onSaved: (c: CustomerOut) => void }) {
   const toast = useToast();
   const [canContact, setCanContact] = useState(customer.can_contact);
-  const [email, setEmail] = useState<ConsentValue>(toValue(customer.email_consent));
-  const [whatsapp, setWhatsapp] = useState<ConsentValue>(toValue(customer.whatsapp_consent));
   const [source, setSource] = useState(customer.consent_source || "");
   const [saving, setSaving] = useState(false);
   const [sends, setSends] = useState<AutomationSendOut[]>([]);
 
   useEffect(() => {
     setCanContact(customer.can_contact);
-    setEmail(toValue(customer.email_consent));
-    setWhatsapp(toValue(customer.whatsapp_consent));
     setSource(customer.consent_source || "");
     apiFetch<AutomationSendOut[]>(`/automations/sends?customer_id=${customer.id}&limit=20`).then(setSends).catch(() => setSends([]));
   }, [customer]);
 
-  const dirty =
-    canContact !== customer.can_contact ||
-    email !== toValue(customer.email_consent) ||
-    whatsapp !== toValue(customer.whatsapp_consent) ||
-    source !== (customer.consent_source || "");
+  const dirty = canContact !== customer.can_contact || source !== (customer.consent_source || "");
 
   async function save() {
     setSaving(true);
@@ -42,8 +29,6 @@ export function ContactPermissionsCard({ customer, onSaved }: { customer: Custom
         method: "PATCH",
         body: JSON.stringify({
           can_contact: canContact,
-          email_consent: fromValue(email),
-          whatsapp_consent: fromValue(whatsapp),
           consent_source: source.trim() || null,
         }),
       });
@@ -56,14 +41,6 @@ export function ContactPermissionsCard({ customer, onSaved }: { customer: Custom
     }
   }
 
-  const select = (value: ConsentValue, onChange: (v: ConsentValue) => void) => (
-    <select value={value} onChange={(e) => onChange(e.target.value as ConsentValue)} disabled={!canContact}>
-      <option value="">Not recorded</option>
-      <option value="yes">Consent given</option>
-      <option value="no">Declined</option>
-    </select>
-  );
-
   return (
     <div className="card">
       <div className="cardHeader" style={{ fontWeight: 900 }}>Messaging permissions</div>
@@ -72,23 +49,13 @@ export function ContactPermissionsCard({ customer, onSaved }: { customer: Custom
           <input type="checkbox" checked={!canContact} onChange={(e) => setCanContact(!e.target.checked)} />
           Patient has opted out of all contact
         </label>
-        <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <div>
-            <div className="muted" style={{ fontSize: 12 }}>Email</div>
-            {select(email, setEmail)}
-          </div>
-          <div>
-            <div className="muted" style={{ fontSize: 12 }}>WhatsApp</div>
-            {select(whatsapp, setWhatsapp)}
-          </div>
+        <div style={{ display: "grid", gap: 4 }}>
+          <span className="muted" style={{ fontSize: 12 }}>Note</span>
+          <input className="formField" value={source} onChange={(e) => setSource(e.target.value)} placeholder="e.g. Replied STOP on WhatsApp, 14 Oct" maxLength={200} style={{ width: "100%" }} />
         </div>
-        <label className="muted" style={{ fontSize: 12 }}>
-          How was this recorded?
-          <input className="formField" value={source} onChange={(e) => setSource(e.target.value)} placeholder="e.g. Lead form tick box, verbal on call 14 Oct" maxLength={200} />
-        </label>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <span className="muted" style={{ fontSize: 12 }}>
-            Automated messages only go out on channels marked &quot;Consent given&quot;.
+            Automated email and WhatsApp go to every patient with valid contact details. Tick opted out when someone replies STOP or asks not to be contacted.
             {customer.consent_updated_at ? ` Last updated ${fmtDateTime(customer.consent_updated_at)}.` : ""}
           </span>
           <button className="btn btnPrimary" type="button" disabled={!dirty || saving} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>

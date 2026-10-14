@@ -8,6 +8,7 @@ import type { AutomationKey, AutomationSendOut, AutomationsOverview, MessagingAu
 import { fmtDateTime } from "@/lib/dates";
 import { useToast } from "@/components/Toast";
 import { AutomationSendStatus, automationLabel, slotText } from "@/components/AutomationSendStatus";
+import { MessageEditor } from "@/components/MessageEditor";
 
 const AUTOMATION_COPY: Record<AutomationKey, { title: string; description: string }> = {
   appointment_confirmation: {
@@ -25,7 +26,7 @@ const AUTOMATION_COPY: Record<AutomationKey, { title: string; description: strin
 const FIELD = { display: "grid", gap: 4 } as const;
 const FULL = { width: "100%", boxSizing: "border-box" } as const;
 
-function TemplateEditor({ template, canEdit, onSaved }: { template: TemplateOut; canEdit: boolean; onSaved: () => Promise<void> }) {
+function TemplateEditor({ template, canEdit, onSaved, fields, examples }: { template: TemplateOut; canEdit: boolean; onSaved: () => Promise<void>; fields: string[]; examples: Record<string, string> }) {
   const toast = useToast();
   const [subject, setSubject] = useState(template.subject || "");
   const [body, setBody] = useState(template.body);
@@ -71,7 +72,7 @@ function TemplateEditor({ template, canEdit, onSaved }: { template: TemplateOut;
       )}
       <div style={FIELD}>
         <span className="muted" style={{ fontSize: 12 }}>Message</span>
-        <textarea rows={template.channel === "email" ? 8 : 5} value={body} onChange={(e) => setBody(e.target.value)} disabled={!canEdit} style={FULL} />
+        <MessageEditor value={body} onChange={setBody} channel={template.channel} fields={fields} examples={examples} disabled={!canEdit} rows={template.channel === "email" ? 9 : 5} />
       </div>
       {canEdit && (
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
@@ -89,6 +90,8 @@ function TemplatePicker({
   value,
   templates,
   canEdit,
+  fields,
+  examples,
   onChange,
   onTemplateSaved,
 }: {
@@ -97,6 +100,8 @@ function TemplatePicker({
   value: string | null;
   templates: TemplateOut[];
   canEdit: boolean;
+  fields: string[];
+  examples: Record<string, string>;
   onChange: (id: string | null) => void;
   onTemplateSaved: () => Promise<void>;
 }) {
@@ -113,7 +118,7 @@ function TemplatePicker({
           ))}
         </select>
       </div>
-      {selected && <TemplateEditor template={selected} canEdit={canEdit} onSaved={onTemplateSaved} />}
+      {selected && <TemplateEditor template={selected} canEdit={canEdit} onSaved={onTemplateSaved} fields={fields} examples={examples} />}
     </div>
   );
 }
@@ -122,11 +127,13 @@ function AutomationCard({
   automation,
   templates,
   canEdit,
+  examples,
   onSaved,
 }: {
   automation: MessagingAutomationOut;
   templates: TemplateOut[];
   canEdit: boolean;
+  examples: Record<string, string>;
   onSaved: () => Promise<void>;
 }) {
   const toast = useToast();
@@ -248,19 +255,19 @@ function AutomationCard({
 
         <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           {draft.email_enabled && (
-            <TemplatePicker label="Email template" channel="email" value={draft.email_template_id} templates={templates} canEdit={canEdit}
+            <TemplatePicker label="Email template" channel="email" value={draft.email_template_id} templates={templates} canEdit={canEdit} fields={automation.supported_fields} examples={examples}
               onChange={(id) => patch({ email_template_id: id })} onTemplateSaved={onSaved} />
           )}
           {draft.whatsapp_enabled && (
-            <TemplatePicker label="WhatsApp template" channel="whatsapp" value={draft.whatsapp_template_id} templates={templates} canEdit={canEdit}
+            <TemplatePicker label="WhatsApp template" channel="whatsapp" value={draft.whatsapp_template_id} templates={templates} canEdit={canEdit} fields={automation.supported_fields} examples={examples}
               onChange={(id) => patch({ whatsapp_template_id: id })} onTemplateSaved={onSaved} />
           )}
           {isConfirmation && draft.send_updates && draft.email_enabled && (
-            <TemplatePicker label="Rescheduled: email template" channel="email" value={draft.update_email_template_id} templates={templates} canEdit={canEdit}
+            <TemplatePicker label="Rescheduled: email template" channel="email" value={draft.update_email_template_id} templates={templates} canEdit={canEdit} fields={automation.supported_fields} examples={examples}
               onChange={(id) => patch({ update_email_template_id: id })} onTemplateSaved={onSaved} />
           )}
           {isConfirmation && draft.send_updates && draft.whatsapp_enabled && (
-            <TemplatePicker label="Rescheduled: WhatsApp template" channel="whatsapp" value={draft.update_whatsapp_template_id} templates={templates} canEdit={canEdit}
+            <TemplatePicker label="Rescheduled: WhatsApp template" channel="whatsapp" value={draft.update_whatsapp_template_id} templates={templates} canEdit={canEdit} fields={automation.supported_fields} examples={examples}
               onChange={(id) => patch({ update_whatsapp_template_id: id })} onTemplateSaved={onSaved} />
           )}
         </div>
@@ -268,7 +275,7 @@ function AutomationCard({
         <div className="muted" style={{ fontSize: 12 }}>
           Fields you can use: {automation.supported_fields.map((f) => <code key={f} style={{ marginRight: 6 }}>{`{{${f}}}`}</code>)}
           <br />
-          For WhatsApp, enter the approved template&apos;s Twilio Content SID. Its numbered placeholders are filled in the order the fields appear in the message above.
+          Write messages as normal text: emails are laid out automatically when sent. For WhatsApp, enter the approved template&apos;s Twilio Content SID. Its numbered placeholders are filled in the order the fields appear in the message above.
         </div>
 
         {canEdit && (
@@ -458,7 +465,14 @@ export default function WorkflowsPage() {
       </section>
 
       {overview?.automations.map((a) => (
-        <AutomationCard key={a.key} automation={a} templates={templates} canEdit={canEdit} onSaved={load} />
+        <AutomationCard
+          key={a.key}
+          automation={a}
+          templates={templates}
+          canEdit={canEdit}
+          examples={{ clinic_name: overview.clinic.clinic_name, clinic_phone: overview.clinic.contact_phone || "", clinic_email: overview.clinic.contact_email || "" }}
+          onSaved={load}
+        />
       ))}
 
       <section className="card">

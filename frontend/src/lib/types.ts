@@ -21,8 +21,6 @@ export type CustomerOut = {
   created_at: string;
   can_contact: boolean;
   language: string | null;
-  email_consent: boolean | null;
-  whatsapp_consent: boolean | null;
   consent_source: string | null;
   consent_updated_at: string | null;
   stage: string;

@@ -500,7 +500,7 @@ Two built-in automations live under **Automations** in the sidebar (`/workflows`
 How it works: the API runs a background tick every `AUTOMATIONS_TICK_SECONDS` (default 60; disable with `AUTOMATIONS_SCHEDULER_ENABLED=false`). Each decision is written to `automation_sends`, whose unique dedupe key prevents duplicates, and is queued as an `outbound_messages` row for the existing worker to send via SMTP or Twilio. Failed sends are shown to staff and never retried automatically.
 
 Setup:
-1. Record consent per patient on the contact page (**Messaging permissions**). A channel is only used when consent is marked "Consent given". Having a phone number never counts as WhatsApp consent.
+1. Email and WhatsApp go to any patient or lead with a valid email address / phone number (international format, e.g. +44…) who hasn't opted out. Contact details left on a lead form count as permission. When someone replies STOP or asks not to be contacted, tick **Patient has opted out of all contact** on their contact page (**Messaging permissions**). The default follow-up templates tell people they can reply STOP.
 2. Fill in **Clinic contact details** on the Automations page.
 3. For WhatsApp, create and approve the templates in Twilio, then paste each Content SID into its template. The `{{field}}` placeholders in the CRM copy map, in order, to the approved template's `{{1}}`, `{{2}}`, and so on.
 4. Switch the automation on. Only bookings and leads created after that moment are handled; nothing is back-filled.

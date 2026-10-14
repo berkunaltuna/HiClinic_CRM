@@ -111,12 +111,13 @@ def _enable_followup(client, admin_headers, templates, **overrides):
     return _configure(client, admin_headers, "lead_followup", **fields)
 
 
-def _customer(client, auth_headers, *, email="pat@example.com", phone="+44 7700 900123", email_consent=True, whatsapp_consent=None, **extra) -> str:
+def _customer(client, auth_headers, *, email="pat@example.com", phone="+44 7700 900123", **extra) -> str:
     r = client.post("/customers", json={"name": "Pat Jones", "email": email, "phone": phone}, headers=auth_headers)
     assert r.status_code == 201, r.text
     cid = r.json()["id"]
-    r = client.patch(f"/customers/{cid}", json={"email_consent": email_consent, "whatsapp_consent": whatsapp_consent, **extra}, headers=auth_headers)
-    assert r.status_code == 200, r.text
+    if extra:
+        r = client.patch(f"/customers/{cid}", json=extra, headers=auth_headers)
+        assert r.status_code == 200, r.text
     return cid
 
 
@@ -195,8 +196,8 @@ def test_whatsapp_number_normalisation(raw, expected):
 
 def test_confirmation_uses_event_slot_and_only_permitted_channels(client, db, auth_headers, admin_headers, templates):
     _enable_confirmation(client, admin_headers, templates)
-    # Phone on file but no WhatsApp consent recorded: WhatsApp must not be used.
-    cid = _customer(client, auth_headers, email_consent=True, whatsapp_consent=None)
+    # No phone on file: WhatsApp can't be used, email still goes.
+    cid = _customer(client, auth_headers, phone=None)
     appt_id = _book(client, auth_headers, _event(client, auth_headers), cid)
 
     ma.run_tick(db)
@@ -205,7 +206,7 @@ def test_confirmation_uses_event_slot_and_only_permitted_channels(client, db, au
     by_channel = {s.channel: s for s in sends}
     assert set(by_channel) == {"email", "whatsapp"}
     assert by_channel["whatsapp"].status == "skipped"
-    assert "No WhatsApp consent recorded" in by_channel["whatsapp"].reason
+    assert "No valid WhatsApp number" in by_channel["whatsapp"].reason
 
     email = by_channel["email"]
     assert email.status == "queued" and email.kind == "confirmation" and email.attempted_at is not None
@@ -233,7 +234,7 @@ def test_confirmation_uses_event_slot_and_only_permitted_channels(client, db, au
 
 def test_whatsapp_confirmation_uses_approved_template_variables(client, db, auth_headers, admin_headers, templates):
     _enable_confirmation(client, admin_headers, templates, email_enabled=False)
-    cid = _customer(client, auth_headers, email_consent=None, whatsapp_consent=True, phone="07700 900456")
+    cid = _customer(client, auth_headers, phone="07700 900456")
     _book(client, auth_headers, _event(client, auth_headers), cid)
 
     ma.run_tick(db)
@@ -251,7 +252,7 @@ def test_whatsapp_confirmation_uses_approved_template_variables(client, db, auth
 def test_whatsapp_without_approved_template_is_held_for_review(client, db, auth_headers, admin_headers, templates):
     free_form = _template(client, admin_headers, "whatsapp", "Hi {{first_name}}, {{appointment_date}} {{appointment_time}}")
     _enable_confirmation(client, admin_headers, templates, email_enabled=False, whatsapp_template_id=free_form)
-    cid = _customer(client, auth_headers, whatsapp_consent=True)
+    cid = _customer(client, auth_headers)
     _book(client, auth_headers, _event(client, auth_headers), cid)
 
     ma.run_tick(db)
@@ -263,7 +264,7 @@ def test_whatsapp_without_approved_template_is_held_for_review(client, db, auth_
 
 def test_invalid_contact_details_skip_channel(client, db, auth_headers, admin_headers, templates):
     _enable_confirmation(client, admin_headers, templates)
-    cid = _customer(client, auth_headers, email=None, phone="7700900123", email_consent=True, whatsapp_consent=True)
+    cid = _customer(client, auth_headers, email=None, phone="7700900123")
     _book(client, auth_headers, _event(client, auth_headers), cid)
 
     ma.run_tick(db)
@@ -276,7 +277,7 @@ def test_invalid_contact_details_skip_channel(client, db, auth_headers, admin_he
 
 def test_opted_out_patient_gets_no_confirmation(client, db, auth_headers, admin_headers, templates):
     _enable_confirmation(client, admin_headers, templates)
-    cid = _customer(client, auth_headers, whatsapp_consent=True, can_contact=False)
+    cid = _customer(client, auth_headers, can_contact=False)
     _book(client, auth_headers, _event(client, auth_headers), cid)
 
     ma.run_tick(db)
@@ -521,10 +522,10 @@ def test_followup_skipped_when_staff_contacted_during_delay(client, db, auth_hea
     assert len(_outbound(db, cid)) == before
 
 
-def test_followup_respects_opt_out_and_channel_consent(client, db, auth_headers, admin_headers, templates):
+def test_followup_respects_opt_out_and_contact_details(client, db, auth_headers, admin_headers, templates):
     _enable_followup(client, admin_headers, templates, whatsapp_enabled=True)
-    opted_out = _customer(client, auth_headers, whatsapp_consent=True, can_contact=False)
-    email_only = _customer(client, auth_headers, email_consent=True, whatsapp_consent=False)
+    opted_out = _customer(client, auth_headers, can_contact=False)
+    email_only = _customer(client, auth_headers, phone=None)
 
     ma.run_tick(db, now=_now() + timedelta(hours=25))
 
@@ -532,7 +533,7 @@ def test_followup_respects_opt_out_and_channel_consent(client, db, auth_headers,
     assert s.status == "skipped" and s.reason == "Lead has opted out of contact"
     statuses = {s.channel: (s.status, s.reason) for s in _sends(db, email_only, ma.FOLLOWUP)}
     assert statuses["email"][0] == "queued"
-    assert statuses["whatsapp"] == ("skipped", "Patient has not given WhatsApp consent")
+    assert statuses["whatsapp"][0] == "skipped" and "No valid WhatsApp number" in statuses["whatsapp"][1]
     assert [m.channel for m in _outbound(db, email_only)] == ["email"]
 
 
@@ -614,12 +615,13 @@ def test_admin_controls_and_validation(client, auth_headers, admin_headers, temp
     assert {a["key"] for a in r.json()["automations"]} == {"appointment_confirmation", "lead_followup"}
 
 
-def test_consent_change_is_stamped_and_audited(client, auth_headers):
-    cid = _customer(client, auth_headers, whatsapp_consent=True, consent_source="Verbal, phone call 14 Oct")
+def test_opt_out_change_is_stamped_with_note(client, auth_headers):
+    cid = _customer(client, auth_headers, can_contact=False, consent_source="Replied STOP 14 Oct")
     r = client.get(f"/customers/{cid}", headers=auth_headers)
     body = r.json()
-    assert body["whatsapp_consent"] is True and body["consent_updated_at"]
-    assert body["consent_source"] == "Verbal, phone call 14 Oct"
+    assert body["can_contact"] is False and body["consent_updated_at"]
+    assert body["consent_source"] == "Replied STOP 14 Oct"
+    assert "whatsapp_consent" not in body
 
 
 def test_template_update_sets_and_clears_twilio_content_sid(client, admin_headers):
@@ -634,8 +636,8 @@ def test_template_update_sets_and_clears_twilio_content_sid(client, admin_header
 
 def test_max_per_run_limits_patients_messaged_per_check(client, db, auth_headers, admin_headers, templates):
     _enable_followup(client, admin_headers, templates, max_per_run=2)
-    # A lead with no consent is decided (skipped) but must not use up the limit.
-    no_consent = _customer(client, auth_headers, email_consent=None)
+    # A lead with no email address is decided (skipped) but must not use up the limit.
+    no_consent = _customer(client, auth_headers, email=None)
     leads = [_customer(client, auth_headers) for _ in range(5)]
     later = _now() + timedelta(hours=25)
 
@@ -675,8 +677,8 @@ def test_max_per_run_applies_to_confirmations_and_can_be_cleared(client, db, aut
 
 def test_attention_list_ignores_skipped_channel_when_another_delivered(client, db, auth_headers, admin_headers, templates):
     _enable_confirmation(client, admin_headers, templates)
-    delivered = _customer(client, auth_headers, email_consent=True, whatsapp_consent=None)
-    unreachable = _customer(client, auth_headers, email_consent=None, whatsapp_consent=None)
+    delivered = _customer(client, auth_headers, phone=None)
+    unreachable = _customer(client, auth_headers, email=None, phone=None)
     event_id = _event(client, auth_headers)
     _book(client, auth_headers, event_id, delivered, start="10:00", end="10:30")
     _book(client, auth_headers, event_id, unreachable, start="10:30", end="11:00")
@@ -686,3 +688,44 @@ def test_attention_list_ignores_skipped_channel_when_another_delivered(client, d
     flagged = {s["customer_id"] for s in r.json()}
     assert delivered not in flagged
     assert unreachable in flagged
+
+
+def test_email_needs_no_consent_but_respects_opt_out(client, db, auth_headers, admin_headers, templates):
+    _enable_followup(client, admin_headers, templates)
+    lead = _customer(client, auth_headers)  # nothing recorded beyond the email address
+    opted_out = _customer(client, auth_headers, can_contact=False)
+    ma.run_tick(db, now=_now() + timedelta(hours=25))
+
+    [send] = _sends(db, lead, ma.FOLLOWUP)
+    assert send.channel == "email" and send.status == "queued"
+    [skip] = _sends(db, opted_out, ma.FOLLOWUP)
+    assert skip.status == "skipped" and skip.reason == "Lead has opted out of contact"
+
+
+def test_whatsapp_needs_no_consent_only_a_valid_number(client, db, auth_headers, admin_headers, templates):
+    _enable_followup(client, admin_headers, templates, email_enabled=False, whatsapp_enabled=True)
+    lead = _customer(client, auth_headers, email=None)  # nothing recorded beyond the phone number
+    ma.run_tick(db, now=_now() + timedelta(hours=25))
+    [send] = _sends(db, lead, ma.FOLLOWUP)
+    assert send.channel == "whatsapp" and send.status == "queued"
+
+
+def test_plain_text_email_template_is_formatted_and_variables_unescaped(client, db, auth_headers, admin_headers, templates):
+    plain = _template(
+        client, admin_headers, "email",
+        "Hi {{first_name}},\n\n*Date:* {{appointment_date}}\n*Where:* {{appointment_location}}\n\nCall {{clinic_phone}}",
+        subject="Your Health Clinic appointment is confirmed",
+    )
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False, email_template_id=plain)
+    r = client.patch(f"/events/{_event(client, auth_headers, location='Smith & Sons Clinic, London')}", json={}, headers=auth_headers)
+    event_id = r.json()["id"]
+    cid = _customer(client, auth_headers)
+    _book(client, auth_headers, event_id, cid)
+    ma.run_tick(db)
+
+    [send] = _sends(db, cid, ma.CONFIRMATION)
+    assert "<p>Hi Pat,</p>" in send.rendered_body
+    assert "<b>Where:</b> Smith &amp; Sons Clinic, London" in send.rendered_body
+    [msg] = _outbound(db, cid)
+    # The worker escapes plain-text templates itself, so variables go unescaped.
+    assert msg.variables["appointment_location"] == "Smith & Sons Clinic, London"

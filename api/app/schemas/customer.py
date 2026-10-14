@@ -42,9 +42,7 @@ class CustomerUpdate(BaseModel):
     can_contact: bool | None = None
     language: str | None = Field(default=None, max_length=10)
 
-    # Per-channel messaging permission: true = granted, false = refused, null = not recorded.
-    email_consent: bool | None = None
-    whatsapp_consent: bool | None = None
+    # Staff note on the patient's contact preference (e.g. "Replied STOP 14 Oct").
     consent_source: str | None = Field(default=None, max_length=200)
 
     # Phase 4B
@@ -85,8 +83,6 @@ class CustomerOut(BaseModel):
     can_contact: bool
     language: str | None
 
-    email_consent: bool | None = None
-    whatsapp_consent: bool | None = None
     consent_source: str | None = None
     consent_updated_at: datetime | None = None
 
