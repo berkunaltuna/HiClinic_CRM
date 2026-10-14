@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -49,26 +50,32 @@ def _normalise_whatsapp_to(phone: str | None) -> str | None:
     if not s:
         return None
 
-    # Accept either "whatsapp:+44..." or "+44..." or "078..."
+    # Accept "whatsapp:+44...", "+44 7700 ...", "0044..." or a national "07...".
     if s.lower().startswith("whatsapp:"):
-        return "whatsapp:" + s.split(":", 1)[1].strip()
+        s = s.split(":", 1)[1].strip()
 
-    if s.startswith("+"):
-        return f"whatsapp:{s}"
-
-    # crude local-number fallback: strip spaces and leading 0, prefix default country code
     digits = "".join(ch for ch in s if ch.isdigit())
+    if s.startswith("+"):
+        return f"whatsapp:+{digits}"
+    if digits.startswith("00"):
+        return f"whatsapp:+{digits[2:]}"
+
+    # crude local-number fallback: strip leading 0, prefix default country code
     if digits.startswith("0"):
         digits = digits[1:]
     return f"whatsapp:{DEFAULT_COUNTRY_CODE}{digits}"
 
 
+_TOKEN_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}")
+
+
 def _render_text(text_tpl: str, context: Mapping[str, Any]) -> str:
-    # very small renderer: replaces {{key}} with context[key]
-    out = text_tpl
-    for k, v in context.items():
-        out = out.replace("{{" + str(k) + "}}", "" if v is None else str(v))
-    return out
+    # Same {{ key }} syntax as the API's template_render (whitespace allowed); unknown keys render empty.
+    def repl(match: re.Match) -> str:
+        val = context.get(match.group(1))
+        return "" if val is None else str(val)
+
+    return _TOKEN_RE.sub(repl, text_tpl)
 
 
 def _strip_html_fallback(html: str) -> str:

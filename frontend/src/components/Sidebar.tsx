@@ -13,7 +13,7 @@ const NAV = [
   { href: "/analytics", label: "Analytics" },
   { href: "/templates", label: "Templates" },
   { href: "/tags", label: "Tags" },
-  { href: "/workflows", label: "Workflows" },
+  { href: "/workflows", label: "Automations" },
   { href: "/outbox", label: "Outbox" },
   { href: "/activity", label: "Activity" },
   { href: "/users", label: "Users" },

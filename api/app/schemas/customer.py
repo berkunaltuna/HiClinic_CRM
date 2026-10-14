@@ -42,6 +42,11 @@ class CustomerUpdate(BaseModel):
     can_contact: bool | None = None
     language: str | None = Field(default=None, max_length=10)
 
+    # Per-channel messaging permission: true = granted, false = refused, null = not recorded.
+    email_consent: bool | None = None
+    whatsapp_consent: bool | None = None
+    consent_source: str | None = Field(default=None, max_length=200)
+
     # Phase 4B
     stage: str | None = Field(default=None, max_length=40)
 
@@ -79,6 +84,11 @@ class CustomerOut(BaseModel):
     # Phase 3 additions
     can_contact: bool
     language: str | None
+
+    email_consent: bool | None = None
+    whatsapp_consent: bool | None = None
+    consent_source: str | None = None
+    consent_updated_at: datetime | None = None
 
     # Phase 4B additions
     stage: str

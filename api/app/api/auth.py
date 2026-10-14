@@ -20,7 +20,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.get("/me", response_model=MeOut)
 def me(user: User = Depends(get_current_user)) -> MeOut:
-    return MeOut(id=str(user.id), email=user.email, role=str(getattr(user, "role", "user")))
+    role = getattr(user, "role", None) or "user"
+    # role may be a UserRole enum; str() of it would give "UserRole.admin".
+    return MeOut(id=str(user.id), email=user.email, role=getattr(role, "value", role))
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)

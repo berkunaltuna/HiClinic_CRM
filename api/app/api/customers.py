@@ -89,16 +89,18 @@ def update_customer(
 ) -> CustomerOut:
     customer = _get_customer(db, customer_id, user)
 
-    before = {"name": customer.name, "email": customer.email, "phone": customer.phone, "stage": customer.stage, "lead_source": customer.lead_source, "form_name": customer.form_name, "campaign_name": customer.campaign_name, "adset_name": customer.adset_name, "ad_name": customer.ad_name}
+    before = {"name": customer.name, "email": customer.email, "phone": customer.phone, "stage": customer.stage, "lead_source": customer.lead_source, "form_name": customer.form_name, "campaign_name": customer.campaign_name, "adset_name": customer.adset_name, "ad_name": customer.ad_name, "can_contact": customer.can_contact, "email_consent": customer.email_consent, "whatsapp_consent": customer.whatsapp_consent, "consent_source": customer.consent_source}
     data = payload.model_dump(exclude_unset=True)
     for key, value in data.items():
         if key == "email" and value is not None:
             value = str(value)
         setattr(customer, key, value)
     customer.updated_at = datetime.now(tz=timezone.utc)
+    if data.keys() & {"can_contact", "email_consent", "whatsapp_consent", "consent_source"}:
+        customer.consent_updated_at = customer.updated_at
 
     db.add(customer)
-    record_audit(db, actor=user, action="customer.updated", entity_type="customer", entity_id=customer.id, before=before, after={"name": customer.name, "email": customer.email, "phone": customer.phone, "stage": customer.stage, "lead_source": customer.lead_source, "form_name": customer.form_name, "campaign_name": customer.campaign_name, "adset_name": customer.adset_name, "ad_name": customer.ad_name})
+    record_audit(db, actor=user, action="customer.updated", entity_type="customer", entity_id=customer.id, before=before, after={"name": customer.name, "email": customer.email, "phone": customer.phone, "stage": customer.stage, "lead_source": customer.lead_source, "form_name": customer.form_name, "campaign_name": customer.campaign_name, "adset_name": customer.adset_name, "ad_name": customer.ad_name, "can_contact": customer.can_contact, "email_consent": customer.email_consent, "whatsapp_consent": customer.whatsapp_consent, "consent_source": customer.consent_source})
     db.commit()
     db.refresh(customer)
     return customer

@@ -60,7 +60,10 @@ export default function OutboxPage() {
                     </div>
                   </td>
                   <td className="muted">{m.channel}</td>
-                  <td><span className="badge">{m.status}</span></td>
+                  <td>
+                    <span className="badge">{m.status}</span>
+                    {m.status === "failed" && m.last_error && <div className="muted" style={{ fontSize: 12, marginTop: 4, maxWidth: 360 }}>{m.last_error}</div>}
+                  </td>
                   <td className="muted">{fmtDateTime(m.created_at)}</td>
                 </tr>
               ))}

@@ -115,6 +115,11 @@ class Settings:
         "Thanks for contacting us. A coordinator will reply shortly.",
     )
 
+    # Messaging automations (appointment confirmation + lead follow-up). The API
+    # runs a background tick that decides what to send and queues it for the worker.
+    automations_scheduler_enabled: bool = _get_bool("AUTOMATIONS_SCHEDULER_ENABLED", True)
+    automations_tick_seconds: int = int(os.getenv("AUTOMATIONS_TICK_SECONDS", "60"))
+
     # Event booking Excel/CSV import
     import_max_rows: int = int(os.getenv("IMPORT_MAX_ROWS", "1000"))
     import_max_file_size_mb: int = int(os.getenv("IMPORT_MAX_FILE_SIZE_MB", "10"))

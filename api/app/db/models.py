@@ -67,6 +67,14 @@ class Customer(Base):
     can_contact = sa.Column(sa.Boolean(), nullable=False, server_default=sa.text('true'))
     language = sa.Column(sa.String(10))
 
+    # Per-channel messaging permission. NULL means "not recorded" and is treated
+    # as no permission by the messaging automations; a phone number on file is
+    # never taken as WhatsApp consent. can_contact=false is a global opt-out.
+    email_consent = sa.Column(sa.Boolean(), nullable=True)
+    whatsapp_consent = sa.Column(sa.Boolean(), nullable=True)
+    consent_source = sa.Column(sa.String(200))
+    consent_updated_at = sa.Column(sa.DateTime(timezone=True))
+
     # Lead attribution fields, populated from Make/Meta where available.
     lead_source = sa.Column(sa.String(120))
     form_id = sa.Column(sa.String(120))
@@ -692,4 +700,92 @@ class OutcomeEvent(Base):
         sa.Index("ix_outcome_events_owner_occurred", "owner_user_id", "occurred_at"),
         # Keep the index name compatible with the migration (owner_outcome).
         sa.Index("ix_outcome_events_owner_outcome", "owner_user_id", "outcome"),
+    )
+
+
+class ClinicSettings(Base):
+    """Single-row clinic profile used in patient-facing automated messages."""
+
+    __tablename__ = "clinic_settings"
+
+    id = sa.Column(sa.Integer(), primary_key=True, default=1)
+    clinic_name = sa.Column(sa.String(200), nullable=False, server_default="Health Clinic")
+    contact_phone = sa.Column(sa.String(50))
+    contact_email = sa.Column(sa.String(320))
+    updated_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+
+class MessagingAutomation(Base):
+    """Admin-controlled settings for one built-in messaging automation.
+
+    key is 'appointment_confirmation' or 'lead_followup'. active_since is stamped
+    whenever the automation is switched on, so enabling it never back-fills
+    messages for bookings or leads that existed while it was off.
+    """
+
+    __tablename__ = "messaging_automations"
+
+    key = sa.Column(sa.String(60), primary_key=True)
+    is_enabled = sa.Column(sa.Boolean(), nullable=False, server_default=sa.false())
+    email_enabled = sa.Column(sa.Boolean(), nullable=False, server_default=sa.false())
+    whatsapp_enabled = sa.Column(sa.Boolean(), nullable=False, server_default=sa.false())
+    email_template_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("templates.id", ondelete="SET NULL"), nullable=True)
+    whatsapp_template_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("templates.id", ondelete="SET NULL"), nullable=True)
+    # Appointment confirmation only: what to send when a confirmed booking moves slot.
+    send_updates = sa.Column(sa.Boolean(), nullable=False, server_default=sa.true())
+    update_email_template_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("templates.id", ondelete="SET NULL"), nullable=True)
+    update_whatsapp_template_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("templates.id", ondelete="SET NULL"), nullable=True)
+    # Lead follow-up only.
+    delay_minutes = sa.Column(sa.Integer(), nullable=False, server_default="1440")
+    # Most patients messaged per automation check (NULL = no limit). Anyone over
+    # the limit waits for the next check, roughly a minute later.
+    max_per_run = sa.Column(sa.Integer(), nullable=True)
+    active_since = sa.Column(sa.DateTime(timezone=True))
+    updated_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+
+class AutomationSend(Base):
+    """One decision/attempt by a messaging automation, per channel.
+
+    dedupe_key is unique, so processing the same booking or lead twice can never
+    queue a second message. channel is NULL for round-level entries (e.g. a
+    booking flagged for staff review before any channel is attempted).
+    status: queued -> sent | failed, or skipped | needs_review | resolved | dismissed | cancelled.
+    """
+
+    __tablename__ = "automation_sends"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    automation_key = sa.Column(sa.String(60), nullable=False)
+    dedupe_key = sa.Column(sa.String(300), nullable=False, unique=True)
+    kind = sa.Column(sa.String(30), nullable=False)  # confirmation | update | followup
+    customer_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    appointment_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
+    revision = sa.Column(sa.Integer(), nullable=False, server_default="1")
+    channel = sa.Column(sa.String(20))
+    status = sa.Column(sa.String(20), nullable=False)
+    reason = sa.Column(sa.Text())
+    slot_starts_at = sa.Column(sa.DateTime(timezone=True))
+    slot_ends_at = sa.Column(sa.DateTime(timezone=True))
+    template_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("templates.id", ondelete="SET NULL"), nullable=True)
+    rendered_subject = sa.Column(sa.Text())
+    rendered_body = sa.Column(sa.Text())
+    outbound_message_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("outbound_messages.id", ondelete="SET NULL"), nullable=True)
+    attempted_at = sa.Column(sa.DateTime(timezone=True))
+    sent_at = sa.Column(sa.DateTime(timezone=True))
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    updated_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    customer = relationship("Customer")
+    outbound_message = relationship("OutboundMessage")
+
+    @property
+    def customer_name(self) -> str | None:
+        return self.customer.name if self.customer is not None else None
+
+    __table_args__ = (
+        sa.Index("ix_automation_sends_key_status", "automation_key", "status"),
+        sa.Index("ix_automation_sends_customer", "customer_id"),
+        sa.Index("ix_automation_sends_appointment", "appointment_id"),
     )

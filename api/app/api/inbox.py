@@ -354,6 +354,30 @@ def mark_confirmed(
     return Response(status_code=204)
 
 
+@router.post("/customers/{customer_id}/whatsapp-opened", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+def whatsapp_opened(
+    customer_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Response:
+    """Log that staff opened a wa.me chat from the CRM.
+
+    The message itself is sent from the staff member's own WhatsApp, so the CRM
+    never sees it; this marker stops automated follow-ups from double-messaging.
+    """
+    c = _get_customer(db, customer_id, user)
+    record_audit(
+        db,
+        actor=user,
+        action="whatsapp.chat_opened",
+        entity_type="customer",
+        entity_id=c.id,
+        metadata={"customer_id": str(c.id), "customer_name": c.name},
+    )
+    db.commit()
+    return Response(status_code=204)
+
+
 @router.post("/customers/{customer_id}/send-text", status_code=status.HTTP_201_CREATED)
 def send_text(
     customer_id: UUID,

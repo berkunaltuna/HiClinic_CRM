@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,8 +9,17 @@ from starlette.responses import Response
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.services.messaging_automations import start_scheduler
 
-app = FastAPI(title="Minimal CRM API", version=os.getenv("APP_VERSION", "0.0.0"))
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Background tick for the messaging automations (off in tests via AUTOMATIONS_SCHEDULER_ENABLED).
+    start_scheduler()
+    yield
+
+
+app = FastAPI(title="Minimal CRM API", version=os.getenv("APP_VERSION", "0.0.0"), lifespan=lifespan)
 
 # Allow the CRM frontend (running on a different origin, e.g. :3000) to call the API.
 # Without this, browser requests will fail even if the endpoints work in Swagger/curl.

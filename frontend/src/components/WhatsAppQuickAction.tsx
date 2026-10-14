@@ -30,6 +30,12 @@ export function WhatsAppQuickAction({
 
   const href = buildWhatsAppLink(customer, message);
 
+  // The chat happens in the staff member's own WhatsApp, so log that it was opened;
+  // this is what stops the automated lead follow-up from double-messaging.
+  function logChatOpened() {
+    void apiFetch(`/inbox/customers/${customer.id}/whatsapp-opened`, { method: "POST" }).catch(() => undefined);
+  }
+
   async function markAsConfirmation() {
     if (!markConfirmation || !message.trim()) return;
     await apiFetch(`/inbox/customers/${customer.id}/mark-confirmed`, {
@@ -41,7 +47,7 @@ export function WhatsAppQuickAction({
 
   if (compact) {
     return href ? (
-      <a className="btn" href={href} target="_blank" rel="noreferrer">WhatsApp</a>
+      <a className="btn" href={href} target="_blank" rel="noreferrer" onClick={logChatOpened}>WhatsApp</a>
     ) : (
       <button className="btn" disabled>WhatsApp</button>
     );
@@ -68,7 +74,7 @@ export function WhatsAppQuickAction({
           <button className="btn" onClick={() => navigator.clipboard?.writeText(message)}>Copy message</button>
           {markConfirmation && <button className="btn" type="button" onClick={() => void markAsConfirmation()}>Mark confirmed</button>}
           {href ? (
-            <a className="btn btnPrimary" href={href} target="_blank" rel="noreferrer">
+            <a className="btn btnPrimary" href={href} target="_blank" rel="noreferrer" onClick={logChatOpened}>
               Open WhatsApp
             </a>
           ) : (

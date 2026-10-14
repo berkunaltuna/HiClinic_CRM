@@ -21,3 +21,9 @@ def test_login_returns_token(client, user_credentials):
 def test_customers_requires_auth(client):
     r = client.get("/customers")
     assert r.status_code == 401
+
+
+def test_me_returns_plain_role(client, admin_headers):
+    r = client.get("/auth/me", headers=admin_headers)
+    assert r.status_code == 200
+    assert r.json()["role"] == "admin"

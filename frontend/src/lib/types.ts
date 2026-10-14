@@ -21,6 +21,10 @@ export type CustomerOut = {
   created_at: string;
   can_contact: boolean;
   language: string | null;
+  email_consent: boolean | null;
+  whatsapp_consent: boolean | null;
+  consent_source: string | null;
+  consent_updated_at: string | null;
   stage: string;
   tag_names: string[];
   latest_deal: DealOut | null;
@@ -115,6 +119,7 @@ export type TemplateOut = {
   name: string;
   subject: string | null;
   body: string;
+  provider_template_id?: string | null;
   category: string;
   language: string;
   created_at: string;
@@ -133,9 +138,66 @@ export type OutboundMessageOut = {
   variables: Record<string, any> | null;
   not_before_at: string | null;
   cancel_on_inbound: boolean;
+  last_error?: string | null;
   created_at: string;
   updated_at?: string | null;
   sent_at?: string | null;
+};
+
+export type AutomationKey = "appointment_confirmation" | "lead_followup";
+
+export type MessagingAutomationOut = {
+  key: AutomationKey;
+  is_enabled: boolean;
+  email_enabled: boolean;
+  whatsapp_enabled: boolean;
+  email_template_id: UUID | null;
+  whatsapp_template_id: UUID | null;
+  send_updates: boolean;
+  update_email_template_id: UUID | null;
+  update_whatsapp_template_id: UUID | null;
+  delay_minutes: number;
+  max_per_run: number | null;
+  active_since: string | null;
+  updated_at: string | null;
+  supported_fields: string[];
+  warnings: string[];
+};
+
+export type ClinicSettingsOut = {
+  clinic_name: string;
+  contact_phone: string | null;
+  contact_email: string | null;
+  updated_at: string | null;
+};
+
+export type AutomationsOverview = {
+  clinic: ClinicSettingsOut;
+  automations: MessagingAutomationOut[];
+  warnings: string[];
+};
+
+export type AutomationSendOut = {
+  id: UUID;
+  automation_key: AutomationKey | string;
+  kind: "confirmation" | "update" | "followup" | string;
+  customer_id: UUID;
+  customer_name: string | null;
+  appointment_id: UUID | null;
+  revision: number;
+  channel: "email" | "whatsapp" | null;
+  status: "queued" | "sent" | "failed" | "skipped" | "needs_review" | "resolved" | "dismissed" | "cancelled" | string;
+  reason: string | null;
+  slot_starts_at: string | null;
+  slot_ends_at: string | null;
+  template_id: UUID | null;
+  rendered_subject: string | null;
+  rendered_body: string | null;
+  outbound_message_id: UUID | null;
+  attempted_at: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 export type KPIResponse = {

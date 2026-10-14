@@ -10,6 +10,7 @@ import { PIPELINE_STAGES, SERVICE_TAGS, stageLabel } from "@/lib/constants";
 import { useToast } from "@/components/Toast";
 import { WhatsAppQuickAction } from "@/components/WhatsAppQuickAction";
 import { MergeCustomerDialog } from "@/components/MergeCustomerDialog";
+import { ContactPermissionsCard } from "@/components/ContactPermissionsCard";
 
 export default function ContactDetailPage() {
   const toast = useToast();
@@ -291,6 +292,8 @@ export default function ContactDetailPage() {
                 </div>
               </div>
             </div>
+
+            <ContactPermissionsCard customer={c} onSaved={setC} />
 
             <div className="card">
               <div className="cardHeader" style={{ fontWeight: 900 }}>Lead form details</div>

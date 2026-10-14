@@ -13,6 +13,8 @@ from sqlalchemy.orm import sessionmaker
 # Must be set BEFORE importing the app/config.
 os.environ.setdefault("ADMIN_EMAILS", "admin@example.com")
 os.environ.setdefault("EMAIL_PROVIDER", "fake")
+# Tests drive the automation tick explicitly instead of a background thread.
+os.environ.setdefault("AUTOMATIONS_SCHEDULER_ENABLED", "false")
 
 from app.main import app
 from app.db.base import Base

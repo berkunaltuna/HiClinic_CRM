@@ -25,6 +25,7 @@ from app.api import (
     audit,
     events,
     event_imports,
+    automations,
 )
 
 api_router = APIRouter()
@@ -57,3 +58,6 @@ api_router.include_router(users.router)
 api_router.include_router(audit.router)
 api_router.include_router(events.router)
 api_router.include_router(event_imports.router)
+
+# Messaging automations (appointment confirmation, lead follow-up)
+api_router.include_router(automations.router)

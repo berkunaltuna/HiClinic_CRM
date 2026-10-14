@@ -75,6 +75,8 @@ def update_template(template_id: UUID, payload: TemplateUpdate, db: Session = De
         tpl.subject = payload.subject
     if payload.body is not None:
         tpl.body = payload.body
+    if "provider_template_id" in payload.model_fields_set:
+        tpl.provider_template_id = (payload.provider_template_id or "").strip() or None
 
     existing = db.query(Template).filter(Template.id != template_id, Template.channel == tpl.channel, Template.name == tpl.name, Template.language == tpl.language).first()
     if existing:
