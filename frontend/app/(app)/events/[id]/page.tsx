@@ -49,6 +49,9 @@ export default function EventDetailPage() {
   const [view, setView] = useState<"timetable" | "settings">("timetable");
   const [showImport, setShowImport] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editNotes, setEditNotes] = useState("");
+  const [savingNotes, setSavingNotes] = useState(false);
 
   async function load() {
     const ev = await apiFetch<EventOut>(`/events/${id}`);
@@ -134,6 +137,29 @@ export default function EventDetailPage() {
     await apiFetch<void>(`/events/${event.id}/appointments/${appt.id}`, { method: "DELETE" });
     toast.push("Appointment removed");
     await load();
+  }
+
+  function startEdit(appt: AppointmentOut) {
+    setEditingId(appt.id);
+    setEditNotes(appt.notes || "");
+  }
+
+  async function saveNotes(appt: AppointmentOut) {
+    if (!event) return;
+    setSavingNotes(true);
+    try {
+      await apiFetch<AppointmentOut>(`/events/${event.id}/appointments/${appt.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ notes: editNotes.trim() || null }),
+      });
+      toast.push("Note updated");
+      setEditingId(null);
+      await load();
+    } catch (err: any) {
+      toast.push(err?.message || "Failed to update note", "error");
+    } finally {
+      setSavingNotes(false);
+    }
   }
 
   if (!event) return <div className="stack"><Topbar title="Event timetable" /><div className="card"><div className="cardBody">Loading…</div></div></div>;
@@ -262,15 +288,28 @@ export default function EventDetailPage() {
                                 <td>
                                   <div className="muted" style={{ fontSize: 12, marginBottom: booked.length ? 6 : 0 }}>{booked.length}/{capacity} {full ? "Full" : "Booked"}</div>
                                   {booked.length ? booked.map((appt) => (
-                                    <div key={appt.id} style={{ padding: "6px 0", borderTop: "1px solid var(--border)" }}>
-                                      <b>{appt.customer_name}</b>
-                                      <div className="muted">{appt.deal_treatment_interest || appt.appointment_type} · {appt.status}</div>
-                                      {appt.notes && <div>{appt.notes}</div>}
+                                    <div key={appt.id} style={{ padding: "6px 0", borderTop: "1px solid var(--border)", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <b>{appt.customer_name}</b>
+                                        <div className="muted">{appt.deal_treatment_interest || appt.appointment_type} · {appt.status}</div>
+                                        {editingId === appt.id ? (
+                                          <div style={{ marginTop: 6 }}>
+                                            <textarea className="formField" value={editNotes} onChange={(e) => setEditNotes(e.target.value)} placeholder="Notes" autoFocus style={{ width: "100%" }} />
+                                            <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                                              <button className="btn btnPrimary" disabled={savingNotes} onClick={() => void saveNotes(appt)}>{savingNotes ? "Saving…" : "Save"}</button>
+                                              <button className="btn" disabled={savingNotes} onClick={() => setEditingId(null)}>Cancel</button>
+                                            </div>
+                                          </div>
+                                        ) : appt.notes && <div style={{ whiteSpace: "pre-wrap" }}>{appt.notes}</div>}
+                                      </div>
+                                      {editingId !== appt.id && (
+                                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                                          <button className="btn btnPrimary" onClick={() => startEdit(appt)}>Edit</button>
+                                          <button className="btn btnDanger" onClick={() => void remove(appt)}>Remove</button>
+                                        </div>
+                                      )}
                                     </div>
                                   )) : <span className="muted">Available</span>}
-                                </td>
-                                <td style={{ width: 120 }}>
-                                  {booked.map((appt) => <button key={appt.id} className="btn" onClick={() => void remove(appt)} style={{ marginBottom: 4 }}>Remove</button>)}
                                 </td>
                               </tr>
                             );
