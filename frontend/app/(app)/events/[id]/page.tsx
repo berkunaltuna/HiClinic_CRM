@@ -52,6 +52,8 @@ export default function EventDetailPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNotes, setEditNotes] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
+  const [dragging, setDragging] = useState<AppointmentOut | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   async function load() {
     const ev = await apiFetch<EventOut>(`/events/${id}`);
@@ -137,6 +139,21 @@ export default function EventDetailPage() {
     await apiFetch<void>(`/events/${event.id}/appointments/${appt.id}`, { method: "DELETE" });
     toast.push("Appointment removed");
     await load();
+  }
+
+  async function move(appt: AppointmentOut, day: string, time: string, slotMinutes: number) {
+    if (!event) return;
+    if (!confirm(`Move ${appt.customer_name} to ${day} ${time}? If their confirmation was already sent, they may get a booking-changed message.`)) return;
+    try {
+      await apiFetch<AppointmentOut>(`/events/${event.id}/appointments/${appt.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ starts_at: combine(day, time), ends_at: combine(day, addMinutes(day, time, slotMinutes)) }),
+      });
+      toast.push("Appointment moved");
+      await load();
+    } catch (err: any) {
+      toast.push(err?.message || "Failed to move appointment", "error");
+    }
   }
 
   function startEdit(appt: AppointmentOut) {
@@ -282,13 +299,47 @@ export default function EventDetailPage() {
                           {slots(d.day, d.start_time, d.end_time, d.slot_minutes).map((t) => {
                             const booked = appts.filter((a) => a.starts_at.slice(11, 16) === t);
                             const full = booked.length >= capacity;
+                            const slotKey = `${d.day}-${t}`;
+                            const canDrop = !!dragging && !full && !booked.some((a) => a.id === dragging.id);
                             return (
-                              <tr key={`${d.day}-${t}`} style={{ background: booked.length ? "rgba(30,103,150,0.06)" : undefined }}>
+                              <tr
+                                key={slotKey}
+                                onDragOver={(e) => {
+                                  if (!canDrop) return;
+                                  e.preventDefault();
+                                  e.dataTransfer.dropEffect = "move";
+                                  if (dropTarget !== slotKey) setDropTarget(slotKey);
+                                }}
+                                onDragLeave={() => { if (dropTarget === slotKey) setDropTarget(null); }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  const appt = dragging;
+                                  setDragging(null);
+                                  setDropTarget(null);
+                                  if (appt && canDrop) void move(appt, d.day, t, d.slot_minutes);
+                                }}
+                                style={{
+                                  background: dropTarget === slotKey ? "rgba(30,103,150,0.18)" : booked.length ? "rgba(30,103,150,0.06)" : undefined,
+                                  outline: dropTarget === slotKey ? "2px dashed var(--primary)" : undefined,
+                                  outlineOffset: -2,
+                                }}
+                              >
                                 <td style={{ width: 90, fontWeight: 700 }}>{t}</td>
                                 <td>
                                   <div className="muted" style={{ fontSize: 12, marginBottom: booked.length ? 6 : 0 }}>{booked.length}/{capacity} {full ? "Full" : "Booked"}</div>
                                   {booked.length ? booked.map((appt) => (
-                                    <div key={appt.id} style={{ padding: "6px 0", borderTop: "1px solid var(--border)", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                                    <div
+                                      key={appt.id}
+                                      draggable={editingId !== appt.id}
+                                      onDragStart={(e) => {
+                                        e.dataTransfer.effectAllowed = "move";
+                                        e.dataTransfer.setData("text/plain", appt.id);
+                                        setDragging(appt);
+                                      }}
+                                      onDragEnd={() => { setDragging(null); setDropTarget(null); }}
+                                      title={editingId !== appt.id ? "Drag to another time slot to move" : undefined}
+                                      style={{ padding: "6px 0", borderTop: "1px solid var(--border)", display: "flex", gap: 12, alignItems: "flex-start", cursor: editingId !== appt.id ? "grab" : undefined, opacity: dragging?.id === appt.id ? 0.5 : 1 }}
+                                    >
                                       <div style={{ flex: 1, minWidth: 0 }}>
                                         <b>{appt.customer_name}</b>
                                         <div className="muted">{appt.deal_treatment_interest || appt.appointment_type} · {appt.status}</div>
