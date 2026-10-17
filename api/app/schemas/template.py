@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Optional
 from uuid import UUID
 
@@ -51,7 +52,8 @@ class TemplateBase(BaseModel):
 
 
 class TemplateCreate(TemplateBase):
-    pass
+    # WhatsApp only: WhatsApp has approved this Twilio Content template.
+    provider_approved: bool = False
 
 
 class TemplateUpdate(BaseModel):
@@ -61,6 +63,8 @@ class TemplateUpdate(BaseModel):
     subject: Optional[str] = Field(default=None, max_length=300)
     body: Optional[str] = Field(default=None, min_length=1)
     provider_template_id: Optional[str] = Field(default=None, max_length=120)
+    # WhatsApp only: True once WhatsApp has approved the Twilio Content template.
+    provider_approved: Optional[bool] = None
     channel: Optional[TemplateChannel] = None
 
     # Phase 3 additions
@@ -91,6 +95,7 @@ class TemplateOut(BaseModel):
     subject: Optional[str]
     body: str
     provider_template_id: Optional[str] = None
+    provider_approved_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

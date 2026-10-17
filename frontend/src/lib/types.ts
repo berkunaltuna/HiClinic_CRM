@@ -118,6 +118,7 @@ export type TemplateOut = {
   subject: string | null;
   body: string;
   provider_template_id?: string | null;
+  provider_approved_at?: string | null;
   category: string;
   language: string;
   created_at: string;
@@ -156,6 +157,7 @@ export type MessagingAutomationOut = {
   update_whatsapp_template_id: UUID | null;
   delay_minutes: number;
   max_per_run: number | null;
+  require_approval: boolean;
   active_since: string | null;
   updated_at: string | null;
   supported_fields: string[];
@@ -356,3 +358,44 @@ export type MergeCommitOut = {
   analysis: MergeAnalysisOut;
 };
 export type LostReasonRow = { reason: string; count: number };
+
+export type RecipientBooking = {
+  event_name: string | null;
+  event_date: string | null;
+  slot: string | null;
+  event_venue: string | null;
+  problem: string | null;
+};
+
+export type AutomationRecipient = {
+  automation_key: AutomationKey;
+  kind: "confirmation" | "update" | "followup" | string;
+  customer_id: UUID;
+  customer_name: string | null;
+  appointment_id: UUID | null;
+  booking: RecipientBooking | null;
+  state: "scheduled" | "existing" | "waiting" | "awaiting_approval" | "needs_reapproval" | "held" | "queued" | "needs_review" | string;
+  reason: string | null;
+  planned_at: string | null;
+  requires_approval: boolean;
+  automation_enabled: boolean;
+  channels: { channel: "email" | "whatsapp"; address: string | null; status: string; reason: string | null }[];
+  can_include: boolean;
+  can_approve: boolean;
+  can_hold: boolean;
+  can_release: boolean;
+  can_exclude: boolean;
+};
+
+export type RecipientPreview = {
+  automation_key: AutomationKey;
+  kind: string;
+  customer_id: UUID;
+  customer_name: string | null;
+  appointment_id: UUID | null;
+  booking: RecipientBooking | null;
+  problem: string | null;
+  channels: { channel: "email" | "whatsapp"; address: string | null; status: string; reason: string | null; subject: string | null; body: string | null }[];
+  /** Identifies exactly what this preview shows; approving requires it to still match. */
+  preview_token: string | null;
+};

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -48,6 +50,7 @@ def create_template(payload: TemplateCreate, db: Session = Depends(get_db), admi
         subject=payload.subject,
         body=payload.body,
         provider_template_id=payload.provider_template_id,
+        provider_approved_at=datetime.now(timezone.utc) if payload.channel == "whatsapp" and payload.provider_approved and payload.provider_template_id else None,
         category=payload.category,
         language=lang,
     )
@@ -73,10 +76,18 @@ def update_template(template_id: UUID, payload: TemplateUpdate, db: Session = De
         tpl.language = _normalise_language(payload.language)
     if payload.subject is not None:
         tpl.subject = payload.subject
+    content_before = (tpl.body, tpl.provider_template_id)
     if payload.body is not None:
         tpl.body = payload.body
     if "provider_template_id" in payload.model_fields_set:
         tpl.provider_template_id = (payload.provider_template_id or "").strip() or None
+    # WhatsApp approval belongs to one exact text + Content SID: any change needs re-approval.
+    if (tpl.body, tpl.provider_template_id) != content_before:
+        tpl.provider_approved_at = None
+    if payload.provider_approved is not None:
+        if payload.provider_approved and (tpl.channel != "whatsapp" or not tpl.provider_template_id):
+            raise HTTPException(status_code=400, detail="Only a WhatsApp template with a Twilio Content SID can be marked as approved")
+        tpl.provider_approved_at = datetime.now(timezone.utc) if payload.provider_approved else None
 
     existing = db.query(Template).filter(Template.id != template_id, Template.channel == tpl.channel, Template.name == tpl.name, Template.language == tpl.language).first()
     if existing:

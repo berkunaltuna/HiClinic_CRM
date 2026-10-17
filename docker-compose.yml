@@ -113,6 +113,8 @@ services:
       WHATSAPP_DEFAULT_OWNER_USER_ID: ${WHATSAPP_DEFAULT_OWNER_USER_ID:-}
     volumes:
       - ./api:/app
+      # The worker's send-time guard is tested from the API test suite.
+      - ./worker:/worker:ro
     depends_on:
       db:
         condition: service_healthy

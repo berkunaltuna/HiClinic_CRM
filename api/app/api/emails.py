@@ -4,11 +4,11 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
 from app.core.config import settings
-from app.db.models import Appointment, Customer, Deal, Event, Interaction, Template, User
+from app.db.models import Customer, Deal, Interaction, Template, User
 from app.db.session import get_db
 from app.schemas.email import ConfirmationEmailRequest, EmailSendOut, EmailSendRequest, TemplatePreviewOut
 from app.services.audit import record_audit
@@ -67,29 +67,17 @@ def _latest_deal(customer: Customer) -> Deal | None:
     return customer.latest_deal
 
 
-def _latest_appointment(db: Session, customer: Customer, appointment_id: UUID | None = None) -> Appointment | None:
-    q = db.query(Appointment).options(joinedload(Appointment.event)).filter(Appointment.customer_id == customer.id)
-    if appointment_id:
-        q = q.filter(Appointment.id == appointment_id)
-    return q.order_by(Appointment.starts_at.desc()).first()
+def _context_for_customer(db: Session, customer: Customer, appointment_id: UUID | None = None) -> tuple[dict[str, str], str | None]:
+    """Merge-field values for a manual send, plus why booking fields couldn't resolve (if so).
 
-
-def _fmt_date(dt: datetime | None) -> str:
-    if not dt:
-        return ""
-    return dt.strftime("%d %B %Y")
-
-
-def _fmt_time(dt: datetime | None) -> str:
-    if not dt:
-        return ""
-    return dt.strftime("%H:%M")
-
-
-def _context_for_customer(db: Session, customer: Customer, appointment_id: UUID | None = None) -> dict[str, str]:
+    Booking fields (event date, slot, venue, ...) come only from the person's own
+    active event booking in the Events tab, never from an event they're merely
+    linked to on a deal. When there's no usable booking they stay empty and the
+    reason is returned so the send can be refused instead of going out blank.
+    """
     deal = _latest_deal(customer)
-    appt = _latest_appointment(db, customer, appointment_id)
-    event = appt.event if appt is not None else (db.get(Event, deal.event_id) if deal is not None and deal.event_id else None)
+    appt, slot, booking_problem = ma.resolve_customer_booking(db, customer, appointment_id=appointment_id)
+    event = appt.event if appt is not None else None
     doctor_name = ""
     if event and event.description:
         # Optional simple convention: put Doctor: Prof. X in the event description.
@@ -98,30 +86,41 @@ def _context_for_customer(db: Session, customer: Customer, appointment_id: UUID 
                 doctor_name = line.split(":", 1)[1].strip()
                 break
     clinic = ma.get_clinic_settings(db)
-    start_local = ma._uk_local(ma._wall_clock(appt.starts_at)) if appt is not None else None
-    return {
-        "customer_name": customer.name or "",
-        "first_name": (customer.name or "").split()[0] if (customer.name or "").strip() else "",
-        "name": customer.name or "",
-        "appointment_end_time": _fmt_time(appt.ends_at if appt else None),
-        "appointment_timezone": f"UK time, {start_local.tzname()}" if start_local is not None else "",
-        "appointment_location": event.location if event and event.location else "",
+    name = (customer.name or "").strip()
+    context = {
+        "customer_name": name,
+        "first_name": name.split()[0] if name else "",
+        "name": name,
         "clinic_name": clinic.clinic_name or "Health Clinic",
         "clinic_phone": clinic.contact_phone or "",
         "clinic_email": clinic.contact_email or "",
         "company": customer.company or "",
         "customer_email": customer.email or "",
         "customer_phone": customer.phone or "",
-        "appointment_date": _fmt_date(appt.starts_at if appt else None),
-        "appointment_time": _fmt_time(appt.starts_at if appt else None),
-        "event_name": event.name if event else "",
-        "event_location": event.location if event and event.location else "",
-        "location": event.location if event and event.location else "",
         "doctor_name": doctor_name,
         "treatment_interest": deal.treatment_interest if deal and deal.treatment_interest else "",
         "preferred_consultation_day": deal.preferred_consultation_day if deal and deal.preferred_consultation_day else "",
         "seminar_preference": deal.seminar_preference if deal and deal.seminar_preference else "",
     }
+    booking_keys = ma.BOOKING_FIELDS + ma.LEGACY_BOOKING_FIELDS
+    values = ma.booking_values(slot) if slot is not None else {}
+    context.update({k: values.get(k, "") for k in booking_keys})
+    return context, booking_problem
+
+
+def _check_fields(context: dict[str, str], booking_problem: str | None, *texts: str | None) -> None:
+    """Refuse to send a message that would go out with blank or unknown fields."""
+    tokens = ma.template_tokens(*texts)
+    unknown = [t for t in tokens if t not in context]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"The message uses unknown field(s): {', '.join('{{' + t + '}}' for t in unknown)}")
+    booking_used = [t for t in tokens if t in ma.BOOKING_FIELDS or t in ma.LEGACY_BOOKING_FIELDS]
+    if booking_used and booking_problem:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Can't fill in the booking details: {booking_problem}. Book them into an event slot (or fix the event) "
+            f"in the Events tab, or remove {', '.join('{{' + t + '}}' for t in booking_used)} from the message.",
+        )
 
 
 def _send_rendered_email(db: Session, user: User, customer: Customer, subject: str, body: str, *, source: str | None = None) -> tuple[str, Interaction]:
@@ -159,16 +158,18 @@ def send_email(
     user: User = Depends(get_current_user),
 ) -> EmailSendOut:
     customer = _get_customer(db, customer_id, user)
-    context = _context_for_customer(db, customer)
+    context, booking_problem = _context_for_customer(db, customer)
 
     if payload.template_id is not None or payload.template_name is not None:
         tpl = _select_template(db, template_id=payload.template_id, template_name=payload.template_name, customer=customer)
         if tpl.category == "marketing" and not customer.can_contact:
             raise HTTPException(status_code=403, detail="Customer cannot be contacted for marketing")
+        _check_fields(context, booking_problem, tpl.subject, tpl.body)
         rendered = render_template(subject=tpl.subject, body=tpl.body, context=context)
         rendered_subject, rendered_body = rendered.subject or "", rendered.body
         source = tpl.body
     else:
+        _check_fields(context, booking_problem, payload.subject, payload.body)
         rendered = render_template(subject=payload.subject or "", body=payload.body or "", context=context)
         rendered_subject, rendered_body = rendered.subject or "", rendered.body
         source = payload.body or ""
@@ -188,11 +189,13 @@ def preview_confirmation_email(
     user: User = Depends(get_current_user),
 ) -> TemplatePreviewOut:
     customer = _get_customer(db, customer_id, user)
-    context = _context_for_customer(db, customer, payload.appointment_id)
+    context, booking_problem = _context_for_customer(db, customer, payload.appointment_id)
     if payload.template_id is not None or payload.template_name is not None:
         tpl = _select_template(db, template_id=payload.template_id, template_name=payload.template_name, customer=customer)
+        _check_fields(context, booking_problem, tpl.subject, tpl.body)
         rendered = render_template(subject=tpl.subject, body=tpl.body, context=context)
     else:
+        _check_fields(context, booking_problem, payload.subject, payload.body)
         rendered = render_template(subject=payload.subject or "", body=payload.body or "", context=context)
     return TemplatePreviewOut(subject=rendered.subject, body=rendered.body)
 
@@ -205,15 +208,17 @@ def send_confirmation_email(
     user: User = Depends(get_current_user),
 ) -> EmailSendOut:
     customer = _get_customer(db, customer_id, user)
-    context = _context_for_customer(db, customer, payload.appointment_id)
+    context, booking_problem = _context_for_customer(db, customer, payload.appointment_id)
     template_id = payload.template_id
     if payload.template_id is not None or payload.template_name is not None:
         tpl = _select_template(db, template_id=payload.template_id, template_name=payload.template_name, customer=customer)
         template_id = tpl.id
+        _check_fields(context, booking_problem, tpl.subject, tpl.body)
         rendered = render_template(subject=tpl.subject, body=tpl.body, context=context)
         subject, body = rendered.subject or "", rendered.body
         source = tpl.body
     else:
+        _check_fields(context, booking_problem, payload.subject, payload.body)
         rendered = render_template(subject=payload.subject or "", body=payload.body or "", context=context)
         subject, body = rendered.subject or "", rendered.body
         source = payload.body or ""
@@ -229,3 +234,20 @@ def send_confirmation_email(
     db.commit()
     db.refresh(interaction)
     return EmailSendOut(provider_message_id=provider_message_id, interaction_id=interaction.id)
+
+
+@router.get("/{customer_id}/message-fields")
+def message_fields(
+    customer_id: UUID,
+    appointment_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Merge-field values for this person, for messages composed in the browser (WhatsApp quick message)."""
+    customer = _get_customer(db, customer_id, user)
+    context, booking_problem = _context_for_customer(db, customer, appointment_id)
+    return {
+        "values": context,
+        "booking_problem": booking_problem,
+        "booking_fields": ma.BOOKING_FIELDS + ma.LEGACY_BOOKING_FIELDS,
+    }

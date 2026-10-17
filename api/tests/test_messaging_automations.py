@@ -18,10 +18,12 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _template(client, admin_headers, channel: str, body: str, subject: str | None = None, provider_template_id: str | None = None) -> str:
+def _template(client, admin_headers, channel: str, body: str, subject: str | None = None, provider_template_id: str | None = None,
+              approved: bool = True) -> str:
     payload = {"channel": channel, "name": f"t_{uuid.uuid4().hex[:8]}", "body": body, "subject": subject}
     if provider_template_id:
         payload["provider_template_id"] = provider_template_id
+        payload["provider_approved"] = approved
     r = client.post("/templates", json=payload, headers=admin_headers)
     assert r.status_code == 201, r.text
     return r.json()["id"]
@@ -31,7 +33,7 @@ def _template(client, admin_headers, channel: str, body: str, subject: str | Non
 def _automations_off(client, admin_headers):
     # Settings rows live for the whole test session; start every test with both paused.
     for key in ma.AUTOMATION_KEYS:
-        r = client.patch(f"/automations/{key}", json={"is_enabled": False}, headers=admin_headers)
+        r = client.patch(f"/automations/{key}", json={"is_enabled": False, "require_approval": False, "max_per_run": None}, headers=admin_headers)
         assert r.status_code == 200, r.text
 
 
@@ -500,7 +502,7 @@ def test_followup_skipped_when_lead_books_during_delay(client, db, auth_headers,
     assert _outbound(db, cid) == []
 
 
-@pytest.mark.parametrize("contact", ["call", "email_logged", "whatsapp_chat_opened", "staff_queued_message"])
+@pytest.mark.parametrize("contact", ["call", "email_logged", "staff_message_sent"])
 def test_followup_skipped_when_staff_contacted_during_delay(client, db, auth_headers, admin_headers, templates, contact):
     _enable_followup(client, admin_headers, templates)
     cid = _customer(client, auth_headers)
@@ -508,10 +510,10 @@ def test_followup_skipped_when_staff_contacted_during_delay(client, db, auth_hea
         r = client.post(f"/customers/{cid}/interactions", json={"channel": "call", "direction": "outbound", "content": "Left voicemail"}, headers=auth_headers)
     elif contact == "email_logged":
         r = client.post(f"/customers/{cid}/email/send", json={"subject": "Hello", "body": "Hi there"}, headers=auth_headers)
-    elif contact == "whatsapp_chat_opened":
-        r = client.post(f"/inbox/customers/{cid}/whatsapp-opened", headers=auth_headers)
     else:
         r = client.post(f"/inbox/customers/{cid}/send-text", json={"channel": "whatsapp", "body": "Hi from the clinic"}, headers=auth_headers)
+        db.query(OutboundMessage).filter(OutboundMessage.id == uuid.UUID(r.json()["id"])).update({OutboundMessage.status: "sent"})
+        db.commit()
     assert r.status_code in (201, 204), r.text
     before = len(_outbound(db, cid))
 
@@ -729,3 +731,836 @@ def test_plain_text_email_template_is_formatted_and_variables_unescaped(client, 
     [msg] = _outbound(db, cid)
     # The worker escapes plain-text templates itself, so variables go unescaped.
     assert msg.variables["appointment_location"] == "Smith & Sons Clinic, London"
+
+
+# ---------------------------------------------------------------------------
+# Event bookings: {{event_date}}, {{slot}}, {{event_venue}}, {{first_name}}
+# ---------------------------------------------------------------------------
+
+EVENT_FIELDS_EMAIL = (
+    "Hi {{first_name}},\n\n*Date:* {{event_date}}\n*Time:* {{slot}}\n*Venue:* {{event_venue}}\n\nCall {{clinic_phone}}"
+)
+SLOT_TEXT = f"10:00 to 10:30 (UK time, {UK_TZ_NAME})"
+DATE_TEXT = f"{DAY:%A} {DAY.day} {DAY:%B %Y}"
+VENUE = "Health Clinic, 1 Harley Street, London"
+
+
+def _event_field_templates(client, admin_headers):
+    email = _template(client, admin_headers, "email", EVENT_FIELDS_EMAIL, subject="Your Health Clinic booking is confirmed")
+    whatsapp = _template(client, admin_headers, "whatsapp", "Hi {{first_name}}, booked: {{event_date}}, {{slot}}, {{event_venue}}", provider_template_id="HX_event")
+    return email, whatsapp
+
+
+def test_event_booking_confirmation_fills_event_date_slot_and_venue(client, db, auth_headers, admin_headers, templates):
+    email_tpl, wa_tpl = _event_field_templates(client, admin_headers)
+    _enable_confirmation(client, admin_headers, templates, email_template_id=email_tpl, whatsapp_template_id=wa_tpl)
+    cid = _customer(client, auth_headers)  # "Pat Jones"
+    _book(client, auth_headers, _event(client, auth_headers, location=VENUE), cid)
+
+    ma.run_tick(db)
+
+    sends = {s.channel: s for s in _sends(db, cid, ma.CONFIRMATION)}
+    body = sends["email"].rendered_body
+    assert "Hi Pat," in body
+    assert f"<b>Date:</b> {DATE_TEXT}" in body
+    assert f"<b>Time:</b> {SLOT_TEXT}" in body
+    assert f"<b>Venue:</b> {VENUE}" in body
+    assert "{{" not in body
+    wa_msg = next(m for m in _outbound(db, cid) if m.channel == "whatsapp")
+    assert wa_msg.variables == {"1": "Pat", "2": DATE_TEXT, "3": SLOT_TEXT, "4": VENUE}
+
+
+def test_no_confirmation_for_unbooked_lead(client, db, auth_headers, admin_headers, templates):
+    _enable_confirmation(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    ma.run_tick(db)
+    assert _sends(db, cid, ma.CONFIRMATION) == []
+    assert _outbound(db, cid) == []
+
+
+def test_no_confirmation_for_event_interest_without_a_slot(client, db, auth_headers, admin_headers, templates):
+    _enable_confirmation(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    event_id = _event(client, auth_headers, location=VENUE)
+    # Linked to the event on their deal, marked "appointment booked" in the pipeline and given
+    # a follow-up date, but never assigned a slot in the Events tab.
+    r = client.post(f"/customers/{cid}/deals", json={"amount": 0, "status": "open", "event_id": event_id, "seminar_preference": "London day"}, headers=auth_headers)
+    assert r.status_code == 201, r.text
+    assert client.post(f"/inbox/customers/{cid}/stage", json={"stage": "appointment_booked"}, headers=auth_headers).status_code == 204
+    client.patch(f"/customers/{cid}", json={"next_follow_up_at": (_now() + timedelta(days=3)).isoformat()}, headers=auth_headers)
+
+    ma.run_tick(db)
+
+    assert _sends(db, cid, ma.CONFIRMATION) == []
+    assert _outbound(db, cid) == []
+    # A manual confirmation using booking fields is refused with a clear reason, not sent blank.
+    r = client.post(f"/customers/{cid}/email/confirmation/send", json={"subject": "Confirmed", "body": EVENT_FIELDS_EMAIL}, headers=auth_headers)
+    assert r.status_code == 400
+    assert "linked to the event 'London consultation days' but has no booked time slot" in r.json()["detail"]
+
+
+def test_appointments_only_exist_as_event_bookings(db):
+    # There is no "generic" appointment in this CRM: every appointment row is a booking into an event.
+    assert Appointment.__table__.c.event_id.nullable is False
+
+
+def test_cancelled_booking_gets_no_confirmation(client, db, auth_headers, admin_headers, templates):
+    _enable_confirmation(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    event_id = _event(client, auth_headers, location=VENUE)
+    r = client.post(f"/events/{event_id}/appointments",
+                    json={"customer_id": cid, "starts_at": f"{DAY}T10:00:00", "ends_at": f"{DAY}T10:30:00", "status": "cancelled"},
+                    headers=auth_headers)
+    assert r.status_code == 201, r.text
+    ma.run_tick(db)
+    assert _sends(db, cid, ma.CONFIRMATION) == []
+
+
+def test_manual_confirmation_email_uses_the_event_booking(client, db, auth_headers, monkeypatch):
+    sent = {}
+
+    class Recorder:
+        def send_email(self, *, to_email, subject, body):
+            sent["body"] = body
+            return "rec-evt"
+
+    monkeypatch.setattr("app.api.emails._get_email_provider", lambda: Recorder())
+    cid = _customer(client, auth_headers)
+    _book(client, auth_headers, _event(client, auth_headers, location=VENUE), cid)
+
+    r = client.post(f"/customers/{cid}/email/confirmation/preview", json={"subject": "Confirmed", "body": EVENT_FIELDS_EMAIL}, headers=auth_headers)
+    assert r.status_code == 200, r.text
+    assert f"*Date:* {DATE_TEXT}\n*Time:* {SLOT_TEXT}\n*Venue:* {VENUE}" in r.json()["body"]
+
+    r = client.post(f"/customers/{cid}/email/confirmation/send", json={"subject": "Confirmed", "body": EVENT_FIELDS_EMAIL}, headers=auth_headers)
+    assert r.status_code == 201, r.text
+    assert DATE_TEXT in sent["body"] and SLOT_TEXT in sent["body"] and VENUE in sent["body"]
+
+
+def test_manual_confirmation_refused_after_booking_cancelled(client, auth_headers):
+    cid = _customer(client, auth_headers)
+    event_id = _event(client, auth_headers, location=VENUE)
+    appt_id = _book(client, auth_headers, event_id, cid)
+    client.patch(f"/events/{event_id}/appointments/{appt_id}", json={"status": "cancelled"}, headers=auth_headers)
+
+    r = client.post(f"/customers/{cid}/email/confirmation/preview", json={"subject": "Confirmed", "body": EVENT_FIELDS_EMAIL}, headers=auth_headers)
+    assert r.status_code == 400
+    assert "booked time slot" in r.json()["detail"]
+
+
+def test_unknown_field_in_manual_email_is_refused(client, auth_headers):
+    cid = _customer(client, auth_headers)
+    r = client.post(f"/customers/{cid}/email/send", json={"subject": "Hi", "body": "See you on {{event_dat}}"}, headers=auth_headers)
+    assert r.status_code == 400 and "{{event_dat}}" in r.json()["detail"]
+
+
+def test_message_fields_endpoint_for_whatsapp_quick_message(client, auth_headers):
+    booked = _customer(client, auth_headers)
+    _book(client, auth_headers, _event(client, auth_headers, location=VENUE), booked)
+    lead = _customer(client, auth_headers)
+
+    r = client.get(f"/customers/{booked}/message-fields", headers=auth_headers).json()
+    assert r["booking_problem"] is None
+    assert (r["values"]["first_name"], r["values"]["event_date"], r["values"]["slot"], r["values"]["event_venue"]) == ("Pat", DATE_TEXT, SLOT_TEXT, VENUE)
+    r = client.get(f"/customers/{lead}/message-fields", headers=auth_headers).json()
+    assert r["values"]["slot"] == "" and "isn't booked into an upcoming event slot" in r["booking_problem"]
+
+
+def test_venue_removed_after_queueing_cancels_then_flags_then_sends_when_fixed(client, db, auth_headers, admin_headers, templates):
+    email_tpl, _wa = _event_field_templates(client, admin_headers)
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False, email_template_id=email_tpl)
+    cid = _customer(client, auth_headers)
+    event_id = _event(client, auth_headers, location=VENUE)
+    _book(client, auth_headers, event_id, cid)
+    ma.run_tick(db)
+    assert [s.status for s in _sends(db, cid, ma.CONFIRMATION)] == ["queued"]
+
+    client.patch(f"/events/{event_id}", json={"location": ""}, headers=auth_headers)
+    ma.run_tick(db)
+    statuses = [(s.revision, s.channel, s.status) for s in _sends(db, cid, ma.CONFIRMATION)]
+    assert statuses == [(1, "email", "cancelled"), (2, None, "needs_review")]
+    assert [m.status for m in _outbound(db, cid)] == ["cancelled"]
+
+    client.patch(f"/events/{event_id}", json={"location": "Health Clinic, 2 Wimpole Street, London"}, headers=auth_headers)
+    ma.run_tick(db)
+    latest = _sends(db, cid, ma.CONFIRMATION)[-1]
+    assert latest.status == "queued" and "2 Wimpole Street" in latest.rendered_body
+    assert sorted(m.status for m in _outbound(db, cid)) == ["cancelled", "queued"]
+
+
+def test_person_with_two_bookings_gets_one_confirmation_per_booking_with_its_own_slot(client, db, auth_headers, admin_headers, templates):
+    email_tpl, _wa = _event_field_templates(client, admin_headers)
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False, email_template_id=email_tpl)
+    cid = _customer(client, auth_headers)
+    event_id = _event(client, auth_headers, location=VENUE)
+    morning = _book(client, auth_headers, event_id, cid, start="10:00", end="10:30")
+    afternoon = _book(client, auth_headers, event_id, cid, start="14:00", end="14:30")
+
+    ma.run_tick(db)
+    ma.run_tick(db)
+
+    sends = {str(s.appointment_id): s for s in _sends(db, cid, ma.CONFIRMATION)}
+    assert set(sends) == {morning, afternoon}
+    assert f"10:00 to 10:30 (UK time, {UK_TZ_NAME})" in sends[morning].rendered_body
+    assert "14:00" not in sends[morning].rendered_body
+    assert f"14:00 to 14:30 (UK time, {UK_TZ_NAME})" in sends[afternoon].rendered_body
+    assert len(_outbound(db, cid)) == 2
+
+    # Moving one booking re-confirms only that booking.
+    client.patch(f"/events/{event_id}/appointments/{afternoon}", json={"starts_at": f"{DAY}T15:00:00", "ends_at": f"{DAY}T15:30:00"}, headers=auth_headers)
+    ma.run_tick(db)
+    revisions = {(str(s.appointment_id), s.revision) for s in _sends(db, cid, ma.CONFIRMATION)}
+    assert revisions == {(morning, 1), (afternoon, 1), (afternoon, 2)}
+
+
+def test_manual_send_with_two_bookings_refuses_to_guess_unless_booking_given(client, auth_headers):
+    cid = _customer(client, auth_headers)
+    event_id = _event(client, auth_headers, location=VENUE)
+    _book(client, auth_headers, event_id, cid, start="10:00", end="10:30")
+    afternoon = _book(client, auth_headers, event_id, cid, start="14:00", end="14:30")
+
+    r = client.post(f"/customers/{cid}/email/confirmation/preview", json={"subject": "Confirmed", "body": EVENT_FIELDS_EMAIL}, headers=auth_headers)
+    assert r.status_code == 400 and "2 upcoming event bookings" in r.json()["detail"]
+    fields = client.get(f"/customers/{cid}/message-fields", headers=auth_headers).json()
+    assert fields["values"]["slot"] == "" and "unclear which one" in fields["booking_problem"]
+
+    r = client.post(f"/customers/{cid}/email/confirmation/preview",
+                    json={"subject": "Confirmed", "body": EVENT_FIELDS_EMAIL, "appointment_id": afternoon}, headers=auth_headers)
+    assert r.status_code == 200 and "14:00 to 14:30" in r.json()["body"]
+    fields = client.get(f"/customers/{cid}/message-fields", params={"appointment_id": afternoon}, headers=auth_headers).json()
+    assert fields["booking_problem"] is None and fields["values"]["slot"].startswith("14:00 to 14:30")
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp: approved Content template required, no free-form exception
+# ---------------------------------------------------------------------------
+
+
+def _inbound_whatsapp_now(client, auth_headers, cid):
+    r = client.post(f"/customers/{cid}/interactions", json={"channel": "whatsapp", "direction": "inbound", "content": "Hi, any news?"}, headers=auth_headers)
+    assert r.status_code == 201, r.text
+
+
+@pytest.mark.parametrize("automation", ["confirmation", "followup"])
+def test_whatsapp_never_sends_free_form_even_inside_24_hour_window(client, db, auth_headers, admin_headers, templates, automation):
+    free_form = _template(client, admin_headers, "whatsapp", "Hi {{first_name}}, call {{clinic_phone}}")
+    cid = _customer(client, auth_headers, email=None)
+    _inbound_whatsapp_now(client, auth_headers, cid)  # patient messaged us just now
+    if automation == "confirmation":
+        _enable_confirmation(client, admin_headers, templates, email_enabled=False, whatsapp_template_id=free_form)
+        _book(client, auth_headers, _event(client, auth_headers), cid)
+        ma.run_tick(db)
+        [send] = _sends(db, cid, ma.CONFIRMATION)
+    else:
+        _enable_followup(client, admin_headers, templates, email_enabled=False, whatsapp_enabled=True, whatsapp_template_id=free_form)
+        cid2 = _customer(client, auth_headers, email=None)
+        _inbound_whatsapp_now(client, auth_headers, cid2)
+        ma.run_tick(db, now=_now() + timedelta(hours=25))
+        [send] = _sends(db, cid2, ma.FOLLOWUP)
+        cid = cid2
+    assert send.status == "needs_review" and "Content SID" in send.reason
+    assert _outbound(db, cid) == []
+
+
+def test_whatsapp_template_must_be_marked_approved(client, db, auth_headers, admin_headers, templates):
+    unapproved = _template(client, admin_headers, "whatsapp", "Hi {{first_name}}, call {{clinic_phone}}", provider_template_id="HX_pending", approved=False)
+    _enable_followup(client, admin_headers, templates, email_enabled=False, whatsapp_enabled=True, whatsapp_template_id=unapproved)
+    cid = _customer(client, auth_headers, email=None)
+    ma.run_tick(db, now=_now() + timedelta(hours=25))
+    [send] = _sends(db, cid, ma.FOLLOWUP)
+    assert send.status == "needs_review" and "isn't marked as approved" in send.reason
+    assert _outbound(db, cid) == []
+
+
+def test_editing_whatsapp_template_clears_approval(client, admin_headers):
+    tid = _template(client, admin_headers, "whatsapp", "Hi {{first_name}}", provider_template_id="HX_ok")
+    assert client.get(f"/templates/{tid}", headers=admin_headers).json()["provider_approved_at"]
+    r = client.patch(f"/templates/{tid}", json={"body": "Hello {{first_name}}"}, headers=admin_headers)
+    assert r.json()["provider_approved_at"] is None
+    r = client.patch(f"/templates/{tid}", json={"provider_approved": True}, headers=admin_headers)
+    assert r.json()["provider_approved_at"]
+    r = client.patch(f"/templates/{tid}", json={"provider_template_id": "HX_other"}, headers=admin_headers)
+    assert r.json()["provider_approved_at"] is None
+    email = _template(client, admin_headers, "email", "Hi", subject="Hi")
+    assert client.patch(f"/templates/{email}", json={"provider_approved": True}, headers=admin_headers).status_code == 400
+
+
+def test_manual_inbox_whatsapp_reply_unaffected(client, db, auth_headers):
+    # Staff replies from the Inbox are free-form, go through the worker as before, and need no template.
+    cid = _customer(client, auth_headers)
+    r = client.post(f"/inbox/customers/{cid}/send-text", json={"channel": "whatsapp", "body": "Thanks, see you soon"}, headers=auth_headers)
+    assert r.status_code == 201
+    [msg] = _outbound(db, cid)
+    assert msg.status == "queued" and msg.body == "Thanks, see you soon" and msg.template_id is None
+
+
+# ---------------------------------------------------------------------------
+# Follow-up: what counts as contact
+# ---------------------------------------------------------------------------
+
+
+def test_opening_whatsapp_chat_does_not_suppress_followup(client, db, auth_headers, admin_headers, templates):
+    _enable_followup(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    assert client.post(f"/inbox/customers/{cid}/whatsapp-opened", headers=auth_headers).status_code == 204
+    ma.run_tick(db, now=_now() + timedelta(hours=25))
+    [send] = _sends(db, cid, ma.FOLLOWUP)
+    assert send.status == "queued"
+
+
+def test_internal_note_does_not_count_as_contact(client, db, auth_headers, admin_headers, templates):
+    _enable_followup(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    client.post(f"/customers/{cid}/interactions", json={"channel": "whatsapp", "direction": "outbound", "subject": "Internal note", "content": "Check scans"}, headers=auth_headers)
+    ma.run_tick(db, now=_now() + timedelta(hours=25))
+    assert [s.status for s in _sends(db, cid, ma.FOLLOWUP)] == ["queued"]
+
+
+def _staff_queued_message(client, db, auth_headers, cid) -> uuid.UUID:
+    r = client.post(f"/inbox/customers/{cid}/send-text", json={"channel": "whatsapp", "body": "Hi from the clinic"}, headers=auth_headers)
+    assert r.status_code == 201
+    return uuid.UUID(r.json()["id"])
+
+
+def _set_message_status(db, msg_id, status):
+    db.query(OutboundMessage).filter(OutboundMessage.id == msg_id).update({OutboundMessage.status: status})
+    db.commit()
+
+
+@pytest.mark.parametrize("staff_outcome,expected", [("sent", "skipped"), ("failed", "queued"), ("cancelled", "queued")])
+def test_pending_staff_message_pauses_followup_until_its_status_changes(client, db, auth_headers, admin_headers, templates, staff_outcome, expected):
+    _enable_followup(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    staff_msg = _staff_queued_message(client, db, auth_headers, cid)
+    later = _now() + timedelta(hours=25)
+
+    ma.run_tick(db, now=later)
+    ma.run_tick(db, now=later + timedelta(minutes=1))
+    assert _sends(db, cid, ma.FOLLOWUP) == []  # paused, nothing decided yet
+
+    _set_message_status(db, staff_msg, staff_outcome)
+    ma.run_tick(db, now=later + timedelta(minutes=2))
+    [send] = _sends(db, cid, ma.FOLLOWUP)
+    assert send.status == expected
+    if expected == "skipped":
+        assert send.reason == "A message to this lead has already been sent"
+
+
+@pytest.mark.parametrize("staff_outcome,expected", [("sent", "cancelled"), ("failed", "queued")])
+def test_queued_followup_pauses_while_staff_message_pending(client, db, auth_headers, admin_headers, templates, staff_outcome, expected):
+    _enable_followup(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    later = _now() + timedelta(hours=25)
+    ma.run_tick(db, now=later)
+    [send] = _sends(db, cid, ma.FOLLOWUP)
+    assert send.status == "queued"
+
+    staff_msg = _staff_queued_message(client, db, auth_headers, cid)
+    ma.run_tick(db, now=later + timedelta(minutes=1))
+    [send] = _sends(db, cid, ma.FOLLOWUP)
+    assert send.status == "paused"
+    assert db.get(OutboundMessage, send.outbound_message_id).status == "held"  # the worker won't pick it up
+
+    _set_message_status(db, staff_msg, staff_outcome)
+    ma.run_tick(db, now=later + timedelta(minutes=2))
+    [send] = _sends(db, cid, ma.FOLLOWUP)
+    assert send.status == expected
+    assert db.get(OutboundMessage, send.outbound_message_id).status == ("cancelled" if expected == "cancelled" else "queued")
+
+
+def test_do_not_contact_set_during_delay_stops_followup(client, db, auth_headers, admin_headers, templates):
+    _enable_followup(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    client.patch(f"/customers/{cid}", json={"can_contact": False, "consent_source": "Asked not to be contacted"}, headers=auth_headers)
+    ma.run_tick(db, now=_now() + timedelta(hours=25))
+    [send] = _sends(db, cid, ma.FOLLOWUP)
+    assert send.status == "skipped" and send.reason == "Lead has opted out of contact"
+
+
+# ---------------------------------------------------------------------------
+# Recipient review: list, preview, approval, hold, exclude
+# ---------------------------------------------------------------------------
+
+
+def _act(client, auth_headers, action, automation_key, customer_id, appointment_id=None, note=None, preview_token=None):
+    body = {"automation_key": automation_key, "customer_id": customer_id}
+    if appointment_id:
+        body["appointment_id"] = appointment_id
+    if note:
+        body["note"] = note
+    if preview_token:
+        body["preview_token"] = preview_token
+    return client.post(f"/automations/recipients/{action}", json=body, headers=auth_headers)
+
+
+def _preview(client, auth_headers, automation_key, customer_id, appointment_id=None):
+    params = {"automation_key": automation_key, "customer_id": customer_id}
+    if appointment_id:
+        params["appointment_id"] = appointment_id
+    r = client.get("/automations/recipients/preview", params=params, headers=auth_headers)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _recipient(client, auth_headers, automation_key, customer_id):
+    items = client.get("/automations/recipients", headers=auth_headers).json()
+    return next((i for i in items if i["automation_key"] == automation_key and i["customer_id"] == customer_id), None)
+
+
+def test_recipient_list_shows_event_booking_and_planned_time(client, db, auth_headers, admin_headers, templates):
+    email_tpl, wa_tpl = _event_field_templates(client, admin_headers)
+    _enable_confirmation(client, admin_headers, templates, email_template_id=email_tpl, whatsapp_template_id=wa_tpl, require_approval=True)
+    _enable_followup(client, admin_headers, templates, delay_minutes=24 * 60)
+    booked = _customer(client, auth_headers)
+    appt = _book(client, auth_headers, _event(client, auth_headers, location=VENUE), booked)
+    lead = _customer(client, auth_headers, phone=None)
+
+    entry = _recipient(client, auth_headers, "appointment_confirmation", booked)
+    assert entry["state"] == "scheduled" and entry["appointment_id"] == appt
+    assert entry["booking"] == {"event_name": "London consultation days", "event_date": DATE_TEXT, "slot": SLOT_TEXT, "event_venue": VENUE, "problem": None}
+    assert {c["channel"]: c["address"] for c in entry["channels"]} == {"email": "pat@example.com", "whatsapp": "+447700900123"}
+
+    follow = _recipient(client, auth_headers, "lead_followup", lead)
+    assert follow["state"] == "scheduled"
+    planned = datetime.fromisoformat(follow["planned_at"])
+    assert timedelta(hours=23, minutes=55) < planned - _now() <= timedelta(hours=24)
+    assert {c["channel"]: c["status"] for c in follow["channels"]} == {"email": "ok"}
+
+
+def test_preview_resolves_fields_and_sends_nothing(client, db, auth_headers, admin_headers, templates):
+    email_tpl, wa_tpl = _event_field_templates(client, admin_headers)
+    _enable_confirmation(client, admin_headers, templates, email_template_id=email_tpl, whatsapp_template_id=wa_tpl)
+    cid = _customer(client, auth_headers)
+    appt = _book(client, auth_headers, _event(client, auth_headers, location=VENUE), cid)
+    audit_before = len(client.get(f"/inbox/customers/{cid}/activity", headers=auth_headers).json())
+
+    preview = _preview(client, auth_headers, "appointment_confirmation", cid, appt)
+    ch = {c["channel"]: c for c in preview["channels"]}
+    assert ch["email"]["subject"] == "Your Health Clinic booking is confirmed"
+    assert all(v in ch["email"]["body"] for v in ("Hi Pat,", DATE_TEXT, SLOT_TEXT, VENUE)) and ch["email"]["body"].startswith("<div")
+    assert ch["whatsapp"]["body"] == f"Hi Pat, booked: {DATE_TEXT}, {SLOT_TEXT}, {VENUE}"
+
+    # Nothing was sent, queued or logged by previewing.
+    db.expire_all()
+    assert _sends(db, cid) == [] and _outbound(db, cid) == []
+    assert len(client.get(f"/inbox/customers/{cid}/activity", headers=auth_headers).json()) == audit_before
+
+
+def test_approval_mode_keeps_messages_until_approved_then_sends_previewed_content(client, db, auth_headers, admin_headers, templates):
+    email_tpl, wa_tpl = _event_field_templates(client, admin_headers)
+    _enable_confirmation(client, admin_headers, templates, email_template_id=email_tpl, whatsapp_template_id=wa_tpl, require_approval=True)
+    cid = _customer(client, auth_headers)
+    appt = _book(client, auth_headers, _event(client, auth_headers, location=VENUE), cid)
+    for _ in range(3):
+        ma.run_tick(db)
+
+    sends = _sends(db, cid, ma.CONFIRMATION)
+    assert {s.status for s in sends} == {"pending_approval"}
+    assert _outbound(db, cid) == []  # unapproved: nothing handed to the worker
+    assert _recipient(client, auth_headers, "appointment_confirmation", cid)["state"] == "awaiting_approval"
+
+    preview = _preview(client, auth_headers, "appointment_confirmation", cid, appt)
+    assert _act(client, auth_headers, "approve", "appointment_confirmation", cid, appt).status_code == 400  # must preview first
+    r = _act(client, auth_headers, "approve", "appointment_confirmation", cid, appt, preview_token=preview["preview_token"])
+    assert r.status_code == 200, r.text
+
+    msgs = {m.channel: m for m in _outbound(db, cid)}
+    assert set(msgs) == {"email", "whatsapp"} and all(m.status == "queued" for m in msgs.values())
+    by_channel = {s.channel: s for s in _sends(db, cid, ma.CONFIRMATION)}
+    pch = {c["channel"]: c for c in preview["channels"]}
+    # The approved messages are exactly what was previewed.
+    assert by_channel["email"].rendered_body == pch["email"]["body"]
+    assert by_channel["email"].rendered_subject == pch["email"]["subject"]
+    assert msgs["email"].variables == by_channel["email"].payload["variables"]
+    assert msgs["whatsapp"].variables == {"1": "Pat", "2": DATE_TEXT, "3": SLOT_TEXT, "4": VENUE}
+    actions = [a["action"] for a in client.get(f"/inbox/customers/{cid}/activity", headers=auth_headers).json()]
+    assert actions.count("automation_send.approved") == 2
+
+
+def test_approval_blocked_when_booking_details_missing(client, db, auth_headers, admin_headers, templates):
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False, require_approval=True)
+    cid = _customer(client, auth_headers)
+    event_id = _event(client, auth_headers, location=None)
+    appt = _book(client, auth_headers, event_id, cid)
+    ma.run_tick(db)
+
+    entry = _recipient(client, auth_headers, "appointment_confirmation", cid)
+    assert entry["state"] == "needs_review" and "no location" in entry["reason"] and not entry["can_approve"]
+    r = _act(client, auth_headers, "approve", "appointment_confirmation", cid, appt)
+    assert r.status_code == 400 and "no location" in r.json()["detail"]
+    assert _outbound(db, cid) == []
+
+
+def test_venue_removed_while_awaiting_approval_prevents_approval(client, db, auth_headers, admin_headers, templates):
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False, require_approval=True)
+    cid = _customer(client, auth_headers)
+    event_id = _event(client, auth_headers, location=VENUE)
+    appt = _book(client, auth_headers, event_id, cid)
+    ma.run_tick(db)
+    client.patch(f"/events/{event_id}", json={"location": ""}, headers=auth_headers)
+
+    r = _act(client, auth_headers, "approve", "appointment_confirmation", cid, appt)
+    assert r.status_code == 400 and "no location" in r.json()["detail"]
+    assert _outbound(db, cid) == []
+
+
+def test_excluded_followup_is_never_sent(client, db, auth_headers, admin_headers, templates):
+    _enable_followup(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    r = _act(client, auth_headers, "exclude", "lead_followup", cid, note="Spoke on Instagram")
+    assert r.status_code == 200, r.text
+    for hours in (25, 30, 40):
+        ma.run_tick(db, now=_now() + timedelta(hours=hours))
+    [entry] = _sends(db, cid, ma.FOLLOWUP)
+    assert entry.status == "excluded" and "Spoke on Instagram" in entry.reason
+    assert _outbound(db, cid) == []
+    assert _recipient(client, auth_headers, "lead_followup", cid) is None
+    assert "automation_send.excluded" in [a["action"] for a in client.get(f"/inbox/customers/{cid}/activity", headers=auth_headers).json()]
+
+
+def test_excluding_a_queued_message_cancels_it(client, db, auth_headers, admin_headers, templates):
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False)
+    cid = _customer(client, auth_headers)
+    appt = _book(client, auth_headers, _event(client, auth_headers, location=VENUE), cid)
+    ma.run_tick(db)
+    assert _recipient(client, auth_headers, "appointment_confirmation", cid)["state"] == "queued"
+
+    assert _act(client, auth_headers, "exclude", "appointment_confirmation", cid, appt).status_code == 200
+    ma.run_tick(db)
+    [send] = _sends(db, cid, ma.CONFIRMATION)
+    assert send.status == "excluded"
+    assert [m.status for m in _outbound(db, cid)] == ["cancelled"]
+
+
+def test_excluding_unapproved_message_means_it_is_never_sent(client, db, auth_headers, admin_headers, templates):
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False, require_approval=True)
+    cid = _customer(client, auth_headers)
+    appt = _book(client, auth_headers, _event(client, auth_headers, location=VENUE), cid)
+    ma.run_tick(db)
+    assert _act(client, auth_headers, "exclude", "appointment_confirmation", cid, appt).status_code == 200
+    ma.run_tick(db)
+    assert _act(client, auth_headers, "approve", "appointment_confirmation", cid, appt).status_code == 400
+    assert _outbound(db, cid) == []
+
+
+def test_hold_then_release_followup(client, db, auth_headers, admin_headers, templates):
+    _enable_followup(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    assert _act(client, auth_headers, "hold", "lead_followup", cid, note="Check with Dr first").status_code == 200
+    ma.run_tick(db, now=_now() + timedelta(hours=25))
+    assert _outbound(db, cid) == []
+    assert _recipient(client, auth_headers, "lead_followup", cid)["state"] == "held"
+
+    assert _act(client, auth_headers, "release", "lead_followup", cid).status_code == 200
+    ma.run_tick(db, now=_now() + timedelta(hours=26))
+    statuses = sorted((s.channel or "round", s.status) for s in _sends(db, cid, ma.FOLLOWUP))
+    assert statuses == [("email", "queued"), ("round", "resolved")]
+    actions = [a["action"] for a in client.get(f"/inbox/customers/{cid}/activity", headers=auth_headers).json()]
+    assert "automation_send.held" in actions and "automation_send.released" in actions
+
+
+def test_hold_a_queued_message_stops_the_worker_until_released(client, db, auth_headers, admin_headers, templates):
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False)
+    cid = _customer(client, auth_headers)
+    appt = _book(client, auth_headers, _event(client, auth_headers, location=VENUE), cid)
+    ma.run_tick(db)
+    assert _act(client, auth_headers, "hold", "appointment_confirmation", cid, appt).status_code == 200
+    [msg] = _outbound(db, cid)
+    assert msg.status == "held"
+    ma.run_tick(db)
+    assert _outbound(db, cid)[0].status == "held"
+
+    assert _act(client, auth_headers, "release", "appointment_confirmation", cid, appt).status_code == 200
+    assert _outbound(db, cid)[0].status == "queued"
+    assert _sends(db, cid, ma.CONFIRMATION)[0].status == "queued"
+
+
+def test_pausing_automation_and_approval_setting_are_audited(client, admin_headers):
+    r = client.patch("/automations/lead_followup", json={"require_approval": True}, headers=admin_headers)
+    assert r.status_code == 200
+    assert next(a for a in r.json()["automations"] if a["key"] == "lead_followup")["require_approval"] is True
+    logs = client.get("/audit-logs", params={"entity_type": "automation"}, headers=admin_headers).json()
+    assert any(l["action"] == "automation.updated" and l["after"].get("require_approval") is True for l in logs)
+
+
+def test_sent_and_failed_outcomes_are_recorded(client, db, auth_headers, admin_headers, templates):
+    _enable_followup(client, admin_headers, templates, delay_minutes=60)
+    ok, bad = _customer(client, auth_headers), _customer(client, auth_headers)
+    ma.run_tick(db, now=_now() + timedelta(hours=2))
+    _worker_result(db, _sends(db, ok, ma.FOLLOWUP)[0], "sent")
+    _worker_result(db, _sends(db, bad, ma.FOLLOWUP)[0], "failed", "SMTP 550")
+    ma.run_tick(db, now=_now() + timedelta(hours=2, minutes=1))
+    assert "automation_send.sent" in [a["action"] for a in client.get(f"/inbox/customers/{ok}/activity", headers=auth_headers).json()]
+    assert "automation_send.failed" in [a["action"] for a in client.get(f"/inbox/customers/{bad}/activity", headers=auth_headers).json()]
+
+
+# ---------------------------------------------------------------------------
+# Existing records (from before the automation was switched on)
+# ---------------------------------------------------------------------------
+
+
+def _approve_with_preview(client, auth_headers, automation_key, cid, appt=None):
+    preview = _preview(client, auth_headers, automation_key, cid, appt)
+    assert preview["preview_token"], preview
+    r = _act(client, auth_headers, "approve", automation_key, cid, appt, preview_token=preview["preview_token"])
+    assert r.status_code == 200, r.text
+    return preview
+
+
+def test_existing_leads_are_listed_but_only_sent_after_include_and_approval(client, db, auth_headers, admin_headers, templates):
+    client.patch("/automations/lead_followup", json={"is_enabled": False}, headers=admin_headers)
+    old_lead = _customer(client, auth_headers)                              # eligible, from before
+    contacted = _customer(client, auth_headers)                             # not eligible: already called
+    client.post(f"/customers/{contacted}/interactions", json={"channel": "call", "direction": "outbound", "content": "Called"}, headers=auth_headers)
+    _enable_followup(client, admin_headers, templates)                      # automatic mode
+    new_lead = _customer(client, auth_headers)                              # created after activation
+
+    entry = _recipient(client, auth_headers, "lead_followup", old_lead)
+    assert entry["state"] == "existing" and entry["can_include"] and entry["requires_approval"] and not entry["can_hold"]
+    assert _recipient(client, auth_headers, "lead_followup", contacted) is None
+
+    later = _now() + timedelta(hours=25)
+    ma.run_tick(db, now=later)
+    assert _outbound(db, old_lead) == []                                    # existing: never automatic
+    assert [m.status for m in _outbound(db, new_lead)] == ["queued"]        # new: automatic as configured
+
+    assert _act(client, auth_headers, "include", "lead_followup", old_lead).status_code == 200
+    ma.run_tick(db, now=later + timedelta(minutes=1))
+    assert [s.status for s in _sends(db, old_lead, ma.FOLLOWUP)] == ["pending_approval"]
+    assert _outbound(db, old_lead) == []                                    # included but not approved: still nothing
+    assert _recipient(client, auth_headers, "lead_followup", old_lead)["state"] == "awaiting_approval"
+
+    preview = _approve_with_preview(client, auth_headers, "lead_followup", old_lead)
+    [send] = _sends(db, old_lead, ma.FOLLOWUP)
+    assert send.status == "queued" and send.approved_at is not None and send.rendered_body == preview["channels"][0]["body"]
+    actions = [a["action"] for a in client.get(f"/inbox/customers/{old_lead}/activity", headers=auth_headers).json()]
+    assert "automation_send.included" in actions and "automation_send.approved" in actions
+
+
+def test_existing_unconfirmed_bookings_are_listed_for_inclusion(client, db, auth_headers, admin_headers, templates):
+    email_tpl, wa_tpl = _event_field_templates(client, admin_headers)
+    client.patch("/automations/appointment_confirmation", json={"is_enabled": False}, headers=admin_headers)
+    event_id = _event(client, auth_headers, location=VENUE)
+    unconfirmed = _customer(client, auth_headers)
+    appt = _book(client, auth_headers, event_id, unconfirmed, start="10:00", end="10:30")
+    manually_confirmed = _customer(client, auth_headers)
+    _book(client, auth_headers, event_id, manually_confirmed, start="11:00", end="11:30")
+    client.post(f"/inbox/customers/{manually_confirmed}/mark-confirmed", json={"channel": "phone"}, headers=auth_headers)
+    _enable_confirmation(client, admin_headers, templates, email_template_id=email_tpl, whatsapp_template_id=wa_tpl)
+
+    ma.run_tick(db)
+    assert _sends(db, unconfirmed) == [] and _outbound(db, unconfirmed) == []
+    entry = _recipient(client, auth_headers, "appointment_confirmation", unconfirmed)
+    assert entry["state"] == "existing" and entry["booking"]["slot"] == SLOT_TEXT and entry["booking"]["event_venue"] == VENUE
+    assert _recipient(client, auth_headers, "appointment_confirmation", manually_confirmed) is None
+
+    assert _act(client, auth_headers, "include", "appointment_confirmation", unconfirmed, appt).status_code == 200
+    preview = _approve_with_preview(client, auth_headers, "appointment_confirmation", unconfirmed, appt)
+    email = next(c for c in preview["channels"] if c["channel"] == "email")
+    assert all(v in email["body"] for v in (DATE_TEXT, SLOT_TEXT, VENUE))
+    assert sorted(m.channel for m in _outbound(db, unconfirmed)) == ["email", "whatsapp"]
+
+
+def test_existing_records_hidden_while_automation_paused_and_include_needs_it_on(client, db, auth_headers, admin_headers, templates):
+    cid = _customer(client, auth_headers)
+    _enable_followup(client, admin_headers, templates)
+    client.patch("/automations/lead_followup", json={"is_enabled": False}, headers=admin_headers)
+    assert _recipient(client, auth_headers, "lead_followup", cid) is None
+    r = _act(client, auth_headers, "include", "lead_followup", cid)
+    assert r.status_code == 400 and "Switch the automation on" in r.json()["detail"]
+
+
+def test_include_only_for_existing_records(client, db, auth_headers, admin_headers, templates):
+    _enable_followup(client, admin_headers, templates)
+    new_lead = _customer(client, auth_headers)
+    r = _act(client, auth_headers, "include", "lead_followup", new_lead)
+    assert r.status_code == 400 and "existing records" in r.json()["detail"]
+
+
+def test_excluding_an_existing_record_removes_it_from_the_list(client, db, auth_headers, admin_headers, templates):
+    client.patch("/automations/lead_followup", json={"is_enabled": False}, headers=admin_headers)
+    cid = _customer(client, auth_headers)
+    _enable_followup(client, admin_headers, templates)
+    assert _act(client, auth_headers, "exclude", "lead_followup", cid, note="Not interested").status_code == 200
+    assert _recipient(client, auth_headers, "lead_followup", cid) is None
+    assert _act(client, auth_headers, "include", "lead_followup", cid).status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Pipeline stage no longer matters
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("stage", ["contacted", "interested", "waiting_for_response"])
+def test_stage_change_alone_does_not_exclude_lead(client, db, auth_headers, admin_headers, templates, stage):
+    _enable_followup(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    assert client.post(f"/inbox/customers/{cid}/stage", json={"stage": stage}, headers=auth_headers).status_code == 204
+    ma.run_tick(db, now=_now() + timedelta(hours=25))
+    assert [s.status for s in _sends(db, cid, ma.FOLLOWUP)] == ["queued"]
+
+
+# ---------------------------------------------------------------------------
+# Hold is temporary; exclude removes
+# ---------------------------------------------------------------------------
+
+
+def test_hold_is_temporary_even_past_the_follow_up_window(client, db, auth_headers, admin_headers, templates):
+    _enable_followup(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    assert _act(client, auth_headers, "hold", "lead_followup", cid).status_code == 200
+    for hours in (25, 60, 120):  # well past the 48h "missed window"
+        ma.run_tick(db, now=_now() + timedelta(hours=hours))
+    assert _outbound(db, cid) == []
+    assert _recipient(client, auth_headers, "lead_followup", cid)["can_release"]
+
+    assert _act(client, auth_headers, "release", "lead_followup", cid).status_code == 200
+    ma.run_tick(db, now=_now() + timedelta(hours=121))
+    assert [m.status for m in _outbound(db, cid)] == ["queued"]
+
+
+def test_hold_and_release_awaiting_approval_returns_to_approval(client, db, auth_headers, admin_headers, templates):
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False, require_approval=True)
+    cid = _customer(client, auth_headers)
+    appt = _book(client, auth_headers, _event(client, auth_headers, location=VENUE), cid)
+    ma.run_tick(db)
+    assert _act(client, auth_headers, "hold", "appointment_confirmation", cid, appt).status_code == 200
+    assert _recipient(client, auth_headers, "appointment_confirmation", cid)["state"] == "held"
+    assert _act(client, auth_headers, "release", "appointment_confirmation", cid, appt).status_code == 200
+    assert _recipient(client, auth_headers, "appointment_confirmation", cid)["state"] == "awaiting_approval"
+    assert _outbound(db, cid) == []
+
+
+# ---------------------------------------------------------------------------
+# Re-check at send time against the approved preview
+# ---------------------------------------------------------------------------
+
+
+def _approved_confirmation(client, db, auth_headers, admin_headers, templates):
+    email_tpl, _wa = _event_field_templates(client, admin_headers)
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False, email_template_id=email_tpl, require_approval=True)
+    cid = _customer(client, auth_headers)
+    event_id = _event(client, auth_headers, location=VENUE)
+    appt = _book(client, auth_headers, event_id, cid)
+    ma.run_tick(db)
+    approved = _approve_with_preview(client, auth_headers, "appointment_confirmation", cid, appt)
+    [send] = _sends(db, cid, ma.CONFIRMATION)
+    assert send.status == "queued" and send.payload["booking"] == {"event_date": DATE_TEXT, "slot": SLOT_TEXT, "event_venue": VENUE}
+    return cid, event_id, appt, approved["preview_token"]
+
+
+@pytest.mark.parametrize("change", ["venue", "slot"])
+def test_booking_changed_after_approval_is_stopped_for_reapproval(client, db, auth_headers, admin_headers, templates, change):
+    cid, event_id, appt, approved_token = _approved_confirmation(client, db, auth_headers, admin_headers, templates)
+    if change == "venue":
+        client.patch(f"/events/{event_id}", json={"location": "Health Clinic, 2 Wimpole Street, London"}, headers=auth_headers)
+        new_value = "2 Wimpole Street"
+    else:
+        client.patch(f"/events/{event_id}/appointments/{appt}", json={"starts_at": f"{DAY}T14:00:00", "ends_at": f"{DAY}T14:30:00"}, headers=auth_headers)
+        new_value = "14:00 to 14:30"
+
+    ma.run_tick(db)
+    [send] = _sends(db, cid, ma.CONFIRMATION)
+    assert send.status == "reapproval" and "Booking changed after this message was prepared" in send.reason
+    assert [m.status for m in _outbound(db, cid)] == ["cancelled"]          # the approved content never goes out
+    ma.run_tick(db)
+    assert len(_outbound(db, cid)) == 1                                     # and nothing new is sent automatically
+    entry = _recipient(client, auth_headers, "appointment_confirmation", cid)
+    assert entry["state"] == "needs_reapproval" and entry["can_approve"]
+
+    # The original approval doesn't carry over: the old preview no longer matches.
+    r = _act(client, auth_headers, "approve", "appointment_confirmation", cid, appt, preview_token=approved_token)
+    assert r.status_code == 409 and "changed since you previewed" in r.json()["detail"]
+    fresh = _approve_with_preview(client, auth_headers, "appointment_confirmation", cid, appt)
+    assert new_value in fresh["channels"][0]["body"]
+    msgs = sorted(_outbound(db, cid), key=lambda m: m.created_at)
+    assert [m.status for m in msgs] == ["cancelled", "queued"]
+    assert new_value in _sends(db, cid, ma.CONFIRMATION)[0].rendered_body
+
+
+def test_approval_refused_if_message_changed_since_preview(client, db, auth_headers, admin_headers, templates):
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False, require_approval=True)
+    cid = _customer(client, auth_headers)
+    appt = _book(client, auth_headers, _event(client, auth_headers, location=VENUE), cid)
+    ma.run_tick(db)
+    preview = _preview(client, auth_headers, "appointment_confirmation", cid, appt)
+    _set_clinic(client, admin_headers, phone="+44 20 0000 1111")           # changes the rendered message
+    r = _act(client, auth_headers, "approve", "appointment_confirmation", cid, appt, preview_token=preview["preview_token"])
+    assert r.status_code == 409 and "changed since you previewed" in r.json()["detail"]
+    assert _outbound(db, cid) == []
+
+
+def test_auto_mode_message_is_replaced_when_venue_changes_before_sending(client, db, auth_headers, admin_headers, templates):
+    email_tpl, _wa = _event_field_templates(client, admin_headers)
+    _enable_confirmation(client, admin_headers, templates, whatsapp_enabled=False, email_template_id=email_tpl)
+    cid = _customer(client, auth_headers)
+    event_id = _event(client, auth_headers, location=VENUE)
+    _book(client, auth_headers, event_id, cid)
+    ma.run_tick(db)
+    client.patch(f"/events/{event_id}", json={"location": "Health Clinic, 2 Wimpole Street, London"}, headers=auth_headers)
+    ma.run_tick(db)
+    sends = _sends(db, cid, ma.CONFIRMATION)
+    assert [(s.revision, s.status) for s in sends] == [(1, "cancelled"), (2, "queued")]
+    assert "2 Wimpole Street" in sends[1].rendered_body
+
+
+# ---------------------------------------------------------------------------
+# Worker's send-time guard (worker/app/send_guard.py)
+# ---------------------------------------------------------------------------
+
+
+def _load_send_guard():
+    import importlib.util
+    from pathlib import Path
+
+    for candidate in (Path(__file__).resolve().parents[2] / "worker" / "app" / "send_guard.py", Path("/worker/app/send_guard.py")):
+        if candidate.exists():
+            spec = importlib.util.spec_from_file_location("worker_send_guard", candidate)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+    pytest.skip("worker code not available")
+
+
+def test_worker_guard_stops_approved_confirmation_when_venue_changed(client, db, auth_headers, admin_headers, templates, engine):
+    guard = _load_send_guard()
+    cid, event_id, appt, _token = _approved_confirmation(client, db, auth_headers, admin_headers, templates)
+    [send] = _sends(db, cid, ma.CONFIRMATION)
+    with engine.connect() as conn:
+        assert guard.check_automated_send(conn, send.outbound_message_id) is None
+    client.patch(f"/events/{event_id}", json={"location": "Somewhere else"}, headers=auth_headers)
+    with engine.connect() as conn:
+        assert "venue changed" in guard.check_automated_send(conn, send.outbound_message_id)
+
+
+def test_worker_guard_stops_held_and_ineligible_followups_but_not_manual_messages(client, db, auth_headers, admin_headers, templates, engine):
+    guard = _load_send_guard()
+    _enable_followup(client, admin_headers, templates)
+    cid = _customer(client, auth_headers)
+    ma.run_tick(db, now=_now() + timedelta(hours=25))
+    [send] = _sends(db, cid, ma.FOLLOWUP)
+    with engine.connect() as conn:
+        assert guard.check_automated_send(conn, send.outbound_message_id) is None
+    client.post(f"/customers/{cid}/interactions", json={"channel": "call", "direction": "outbound", "content": "Called"}, headers=auth_headers)
+    with engine.connect() as conn:
+        assert guard.check_automated_send(conn, send.outbound_message_id) == "Lead has been contacted"
+
+    staff = _staff_queued_message(client, db, auth_headers, cid)
+    with engine.connect() as conn:
+        assert guard.check_automated_send(conn, staff) is None             # manual messages are never blocked
+
+    r = _act(client, auth_headers, "hold", "lead_followup", cid)
+    assert r.status_code == 200, r.text
+    with engine.connect() as conn:
+        assert "no longer has this message queued" in guard.check_automated_send(conn, send.outbound_message_id)
+
+
+def test_message_stopped_by_worker_guard_goes_to_reapproval_on_next_check(client, db, auth_headers, admin_headers, templates):
+    cid, event_id, appt, _token = _approved_confirmation(client, db, auth_headers, admin_headers, templates)
+    [send] = _sends(db, cid, ma.CONFIRMATION)
+    client.patch(f"/events/{event_id}", json={"location": "Somewhere else"}, headers=auth_headers)
+    _set_message_status(db, send.outbound_message_id, "held")                # what the worker does when its guard fails
+    ma.run_tick(db)
+    [send] = _sends(db, cid, ma.CONFIRMATION)
+    assert send.status == "reapproval"
+    assert db.get(OutboundMessage, send.outbound_message_id).status == "cancelled"

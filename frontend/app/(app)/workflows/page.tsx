@@ -9,17 +9,18 @@ import { fmtDateTime } from "@/lib/dates";
 import { useToast } from "@/components/Toast";
 import { AutomationSendStatus, automationLabel, slotText } from "@/components/AutomationSendStatus";
 import { MessageEditor } from "@/components/MessageEditor";
+import { RecipientReview } from "@/components/RecipientReview";
 
 const AUTOMATION_COPY: Record<AutomationKey, { title: string; description: string }> = {
   appointment_confirmation: {
     title: "Appointment confirmation",
     description:
-      "Sends a confirmation when a booking is created in the Events tab (status booked/confirmed). The date, time and location come from the booked slot, shown in UK time. Bookings with missing or unclear slot details are held for review instead of being sent.",
+      "Sends a confirmation to each person booked into an event time slot in the Events tab. The event date, slot and venue come from that booking, shown in UK time. Bookings with missing or unclear details are held for review instead of being sent.",
   },
   lead_followup: {
     title: "Follow up with leads who haven't booked",
     description:
-      "Sends one follow-up after the delay to leads still at stage New with no appointment and no logged outbound call, message or WhatsApp chat. Eligibility is checked again at send time, so booking or contacting the lead first stops it.",
+      "Sends one follow-up after the delay to leads with no event booking, no message sent and no logged call (their pipeline stage doesn't matter). If a staff message is waiting to be sent, the follow-up waits and checks again once it goes out or fails. Opening a WhatsApp chat doesn't count as contact: if you messaged someone outside the CRM, exclude them under Upcoming recipients.",
   },
 };
 
@@ -31,22 +32,28 @@ function TemplateEditor({ template, canEdit, onSaved, fields, examples }: { temp
   const [subject, setSubject] = useState(template.subject || "");
   const [body, setBody] = useState(template.body);
   const [sid, setSid] = useState(template.provider_template_id || "");
+  const [approved, setApproved] = useState(!!template.provider_approved_at);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setSubject(template.subject || "");
     setBody(template.body);
     setSid(template.provider_template_id || "");
+    setApproved(!!template.provider_approved_at);
   }, [template]);
 
-  const dirty = subject !== (template.subject || "") || body !== template.body || sid !== (template.provider_template_id || "");
+  const contentChanged = body !== template.body || sid !== (template.provider_template_id || "");
+  const dirty = subject !== (template.subject || "") || contentChanged || approved !== !!template.provider_approved_at;
 
   async function save() {
     setSaving(true);
     try {
-      const payload: Record<string, string> = { body };
+      const payload: Record<string, string | boolean> = { body };
       if (template.channel === "email") payload.subject = subject;
-      else payload.provider_template_id = sid;
+      else {
+        payload.provider_template_id = sid;
+        payload.provider_approved = approved && !!sid.trim();
+      }
       await apiFetch<TemplateOut>(`/templates/${template.id}`, { method: "PATCH", body: JSON.stringify(payload) });
       toast.push(`Template '${template.name}' saved`);
       await onSaved();
@@ -68,6 +75,15 @@ function TemplateEditor({ template, canEdit, onSaved, fields, examples }: { temp
         <div style={FIELD}>
           <span className="muted" style={{ fontSize: 12 }}>Twilio Content SID of the approved WhatsApp template</span>
           <input className="formField" value={sid} onChange={(e) => setSid(e.target.value)} placeholder="HX…" disabled={!canEdit} style={FULL} />
+          <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>
+            <input type="checkbox" checked={approved && !!sid.trim()} disabled={!canEdit || !sid.trim()} onChange={(e) => setApproved(e.target.checked)} />
+            Approved by WhatsApp (Twilio shows this template as approved)
+          </label>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {template.provider_approved_at && !contentChanged
+              ? `Marked approved ${fmtDateTime(template.provider_approved_at)}. Changing the text or SID clears this.`
+              : "Automated WhatsApp messages are only sent once this is ticked. Changing the text or SID clears it."}
+          </span>
         </div>
       )}
       <div style={FIELD}>
@@ -76,7 +92,7 @@ function TemplateEditor({ template, canEdit, onSaved, fields, examples }: { temp
       </div>
       {canEdit && (
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-          {dirty && <button className="btn" type="button" onClick={() => { setSubject(template.subject || ""); setBody(template.body); setSid(template.provider_template_id || ""); }}>Reset</button>}
+          {dirty && <button className="btn" type="button" onClick={() => { setSubject(template.subject || ""); setBody(template.body); setSid(template.provider_template_id || ""); setApproved(!!template.provider_approved_at); }}>Reset</button>}
           <button className="btn btnPrimary" type="button" disabled={!dirty || saving || !body.trim()} onClick={() => void save()}>{saving ? "Saving…" : "Save template"}</button>
         </div>
       )}
@@ -166,6 +182,7 @@ function AutomationCard({
           update_whatsapp_template_id: next.update_whatsapp_template_id,
           delay_minutes: next.delay_minutes,
           max_per_run: next.max_per_run,
+          require_approval: next.require_approval,
         }),
       });
       toast.push(`${copy.title} ${overrides.is_enabled === undefined ? "saved" : overrides.is_enabled ? "switched on" : "paused"}`);
@@ -232,6 +249,18 @@ function AutomationCard({
               hours after the lead is created
             </label>
           )}
+          <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            Sending
+            <select
+              value={draft.require_approval ? "approval" : "auto"}
+              onChange={(e) => patch({ require_approval: e.target.value === "approval" })}
+              disabled={!canEdit}
+              style={{ width: "auto" }}
+            >
+              <option value="auto">Send automatically</option>
+              <option value="approval">Require staff approval</option>
+            </select>
+          </label>
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
             Send to
             <select
@@ -335,6 +364,7 @@ export default function WorkflowsPage() {
   const [attention, setAttention] = useState<AutomationSendOut[]>([]);
   const [recent, setRecent] = useState<AutomationSendOut[]>([]);
   const [role, setRole] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [busy, setBusy] = useState(true);
   const [running, setRunning] = useState(false);
   const [clinic, setClinic] = useState({ clinic_name: "", contact_phone: "", contact_email: "" });
@@ -357,6 +387,7 @@ export default function WorkflowsPage() {
       setRecent(rec);
       setRole(me?.role || null);
       setClinic({ clinic_name: ov.clinic.clinic_name, contact_phone: ov.clinic.contact_phone || "", contact_email: ov.clinic.contact_email || "" });
+      setRefreshKey((k) => k + 1);
     } catch (err: any) {
       toast.push(err?.message || "Failed to load automations", "error");
     } finally {
@@ -438,6 +469,8 @@ export default function WorkflowsPage() {
           {overview.warnings.map((w) => <div key={w} style={{ fontSize: 13 }}>⚠ {w}</div>)}
         </div>
       )}
+
+      <RecipientReview refreshKey={refreshKey} onChanged={load} />
 
       <section className="card">
         <div className="cardHeader" style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>

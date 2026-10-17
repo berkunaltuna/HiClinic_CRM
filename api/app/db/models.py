@@ -250,6 +250,9 @@ class Template(Base):
     body = sa.Column(sa.Text(), nullable=False)
     # Optional provider-side template identifier (e.g. Twilio Content SID for WhatsApp)
     provider_template_id = sa.Column(sa.String(120))
+    # When an admin confirmed WhatsApp approved that Content template; cleared when the
+    # text or SID changes. Automated WhatsApp messages require it.
+    provider_approved_at = sa.Column(sa.DateTime(timezone=True))
 
     template_category_enum = sa.Enum('transactional', 'marketing', name='template_category')
     category = sa.Column(template_category_enum, nullable=False, server_default='transactional')
@@ -738,6 +741,8 @@ class MessagingAutomation(Base):
     # Most patients messaged per automation check (NULL = no limit). Anyone over
     # the limit waits for the next check, roughly a minute later.
     max_per_run = sa.Column(sa.Integer(), nullable=True)
+    # True = every message waits as "pending_approval" until a staff member approves it.
+    require_approval = sa.Column(sa.Boolean(), nullable=False, server_default=sa.false())
     active_since = sa.Column(sa.DateTime(timezone=True))
     updated_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     updated_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
@@ -749,7 +754,10 @@ class AutomationSend(Base):
     dedupe_key is unique, so processing the same booking or lead twice can never
     queue a second message. channel is NULL for round-level entries (e.g. a
     booking flagged for staff review before any channel is attempted).
-    status: queued -> sent | failed, or skipped | needs_review | resolved | dismissed | cancelled.
+    Channel rows: pending_approval -> queued -> sent | failed, with paused (waiting on a
+    staff message), held (temporary staff hold), reapproval (booking changed after approval),
+    excluded, skipped, needs_review, cancelled, dismissed.
+    Round rows (channel NULL): needs_review, held, released, excluded, skipped, resolved.
     """
 
     __tablename__ = "automation_sends"
@@ -769,6 +777,11 @@ class AutomationSend(Base):
     template_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("templates.id", ondelete="SET NULL"), nullable=True)
     rendered_subject = sa.Column(sa.Text())
     rendered_body = sa.Column(sa.Text())
+    # What is handed to the worker: {"template_id", "body", "variables"}, plus for event
+    # confirmations the {"booking": {event_date, slot, event_venue}} it was rendered with.
+    payload = sa.Column(sa.JSON())
+    approved_at = sa.Column(sa.DateTime(timezone=True))
+    approved_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     outbound_message_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("outbound_messages.id", ondelete="SET NULL"), nullable=True)
     attempted_at = sa.Column(sa.DateTime(timezone=True))
     sent_at = sa.Column(sa.DateTime(timezone=True))

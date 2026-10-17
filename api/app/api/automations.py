@@ -19,6 +19,7 @@ from app.schemas.messaging_automation import (
     ClinicSettingsUpdate,
     MessagingAutomationOut,
     MessagingAutomationUpdate,
+    RecipientAction,
 )
 from app.services import messaging_automations as ma
 from app.services.audit import record_audit
@@ -31,7 +32,12 @@ _TEMPLATE_FIELDS = {
     "update_email_template_id": "email",
     "update_whatsapp_template_id": "whatsapp",
 }
-_REQUIRED_CONFIRMATION_FIELDS = ("appointment_date", "appointment_time", "appointment_timezone", "appointment_location")
+# Each booking detail a confirmation must show, with the older field names that also cover it.
+_REQUIRED_CONFIRMATION_FIELDS = {
+    "event_date": ("appointment_date",),
+    "slot": ("appointment_time",),
+    "event_venue": ("appointment_location", "event_location", "location"),
+}
 
 
 def _template_warnings(db: Session, auto: MessagingAutomation, clinic) -> list[str]:
@@ -51,11 +57,11 @@ def _template_warnings(db: Session, auto: MessagingAutomation, clinic) -> list[s
                 warnings.append(f"{label}: none selected.")
                 continue
             tokens = ma.template_tokens(tpl.subject if channel == "email" else None, tpl.body)
-            unsupported = [t for t in tokens if t not in ma.SUPPORTED_FIELDS[auto.key]]
+            unsupported = [t for t in tokens if t not in ma.ACCEPTED_FIELDS[auto.key]]
             if unsupported:
                 warnings.append(f"{label} '{tpl.name}' uses unsupported field(s): {', '.join(unsupported)}.")
             if auto.key == ma.CONFIRMATION:
-                missing = [f for f in _REQUIRED_CONFIRMATION_FIELDS if f not in tokens]
+                missing = ["{{" + f + "}}" for f, alts in _REQUIRED_CONFIRMATION_FIELDS.items() if f not in tokens and not set(alts) & set(tokens)]
                 if missing:
                     warnings.append(f"{label} '{tpl.name}' doesn't include: {', '.join(missing)}.")
                 if not ({"clinic_phone", "clinic_email"} & set(tokens)) and not tpl.provider_template_id:
@@ -64,11 +70,9 @@ def _template_warnings(db: Session, auto: MessagingAutomation, clinic) -> list[s
                 if field in tokens and not (value or "").strip():
                     warnings.append(f"{label} '{tpl.name}' uses {{{{{field}}}}} but the clinic {field.split('_')[1]} isn't set, so sends will be held for review.")
             if channel == "whatsapp" and not tpl.provider_template_id:
-                warnings.append(
-                    f"{label} '{tpl.name}' has no Twilio Content SID. WhatsApp only accepts free-form messages within "
-                    "24 hours of the patient's last message, so most sends will be held for review until an approved "
-                    "template's SID is added."
-                )
+                warnings.append(f"{label} '{tpl.name}' has no Twilio Content SID, so no WhatsApp messages will be sent until it has one and is marked approved.")
+            elif channel == "whatsapp" and tpl.provider_approved_at is None:
+                warnings.append(f"{label} '{tpl.name}' isn't marked as approved by WhatsApp, so no WhatsApp messages will be sent until it is.")
     return warnings
 
 
@@ -109,6 +113,7 @@ def _snapshot(auto: MessagingAutomation) -> dict:
         "send_updates": auto.send_updates,
         "delay_minutes": auto.delay_minutes,
         "max_per_run": auto.max_per_run,
+        "require_approval": auto.require_approval,
         **{k: str(getattr(auto, k)) if getattr(auto, k) else None for k in _TEMPLATE_FIELDS},
     }
 
@@ -142,7 +147,7 @@ def update_automation(key: AutomationKey, payload: MessagingAutomationUpdate, db
     before = _snapshot(auto)
     data = payload.model_dump(exclude_unset=True)
 
-    for field in ("is_enabled", "email_enabled", "whatsapp_enabled", "send_updates", "delay_minutes"):
+    for field in ("is_enabled", "email_enabled", "whatsapp_enabled", "send_updates", "delay_minutes", "require_approval"):
         if field in data and data[field] is None:
             raise HTTPException(status_code=400, detail=f"{field} cannot be null")
     if "delay_minutes" in data and not ma.MIN_FOLLOWUP_DELAY_MINUTES <= data["delay_minutes"] <= ma.MAX_FOLLOWUP_DELAY_MINUTES:
@@ -230,3 +235,72 @@ def dismiss_send(send_id: UUID, db: Session = Depends(get_db), user: User = Depe
 @router.post("/run")
 def run_now(db: Session = Depends(get_db), admin: User = Depends(require_admin)) -> dict:
     return ma.run_tick(db)
+
+
+# ---------------------------------------------------------------------------
+# Recipient review
+# ---------------------------------------------------------------------------
+
+
+def _visible_customer(db: Session, customer_id: UUID, user: User) -> Customer:
+    customer = db.get(Customer, customer_id)
+    if customer is None or (not settings.share_customers_across_users and customer.owner_user_id != user.id):
+        raise HTTPException(status_code=404, detail="Patient not found")
+    return customer
+
+
+@router.get("/recipients")
+def list_recipients(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
+    """Who is due to receive each automated message (read-only)."""
+    items = ma.list_recipients(db)
+    db.rollback()  # listing never changes anything
+    if not settings.share_customers_across_users:
+        own = {str(c[0]) for c in db.query(Customer.id).filter(Customer.owner_user_id == user.id)}
+        items = [i for i in items if i["customer_id"] in own]
+    return items
+
+
+@router.get("/recipients/preview")
+def preview_recipient(
+    automation_key: AutomationKey,
+    customer_id: UUID,
+    appointment_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """The final message as it would be sent, with fields filled in. Never sends or saves anything."""
+    _visible_customer(db, customer_id, user)
+    try:
+        preview = ma.preview_recipient(db, automation_key, customer_id, appointment_id)
+    except ma.RecipientActionError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    finally:
+        db.rollback()
+    return preview
+
+
+_ACTIONS = {
+    "include": lambda db, r, user, p, now: ma.include_recipient(db, r, user, now),
+    "approve": lambda db, r, user, p, now: ma.approve_recipient(db, r, user, p.preview_token, now),
+    "hold": lambda db, r, user, p, now: ma.hold_recipient(db, r, user, p.note, now),
+    "release": lambda db, r, user, p, now: ma.release_recipient(db, r, user, now),
+    "exclude": lambda db, r, user, p, now: ma.exclude_recipient(db, r, user, p.note, now),
+}
+
+
+@router.post("/recipients/{action}")
+def act_on_recipient(action: str, payload: RecipientAction, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    """Include (existing records), approve, hold, release or exclude one recipient's automated
+    message. Recorded in the activity log. Approving requires the preview_token from the preview."""
+    if action not in _ACTIONS:
+        raise HTTPException(status_code=404, detail="Unknown action")
+    _visible_customer(db, payload.customer_id, user)
+    now = datetime.now(timezone.utc)
+    try:
+        r = ma.get_recipient(db, payload.automation_key, payload.customer_id, payload.appointment_id)
+        _ACTIONS[action](db, r, user, payload, now)
+    except ma.RecipientActionError as e:
+        db.rollback()
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    db.commit()
+    return ma.preview_recipient(db, payload.automation_key, payload.customer_id, payload.appointment_id)

@@ -360,10 +360,11 @@ def whatsapp_opened(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Response:
-    """Log that staff opened a wa.me chat from the CRM.
+    """Log in the activity feed that staff opened a wa.me chat from the CRM.
 
-    The message itself is sent from the staff member's own WhatsApp, so the CRM
-    never sees it; this marker stops automated follow-ups from double-messaging.
+    Opening the chat doesn't mean a message was sent, so this does not count as
+    contacting the lead for the automated follow-up. Staff who did message the
+    lead should log it, or hold/exclude the follow-up on the Automations page.
     """
     c = _get_customer(db, customer_id, user)
     record_audit(

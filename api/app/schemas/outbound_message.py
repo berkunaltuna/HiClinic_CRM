@@ -7,7 +7,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 OutboundChannel = Literal["whatsapp", "sms", "email"]
-OutboundStatus = Literal["queued", "sending", "sent", "failed", "cancelled"]
+# "held": an automated message paused by staff or waiting on a pending staff message.
+OutboundStatus = Literal["queued", "sending", "sent", "failed", "cancelled", "held"]
 
 
 class OutboundMessageCreate(BaseModel):

@@ -40,6 +40,7 @@ class MessagingAutomationOut(BaseModel):
     update_whatsapp_template_id: UUID | None = None
     delay_minutes: int
     max_per_run: int | None = None
+    require_approval: bool = False
     active_since: datetime | None = None
     updated_at: datetime | None = None
     supported_fields: list[str] = []
@@ -60,6 +61,8 @@ class MessagingAutomationUpdate(BaseModel):
     delay_minutes: int | None = None
     # null = send to everyone due in one check.
     max_per_run: int | None = Field(default=None, ge=1, le=100)
+    # True = "Require staff approval"; False = "Send automatically".
+    require_approval: bool | None = None
 
 
 class AutomationsOverview(BaseModel):
@@ -91,3 +94,14 @@ class AutomationSendOut(BaseModel):
     sent_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class RecipientAction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    automation_key: AutomationKey
+    customer_id: UUID
+    appointment_id: UUID | None = None
+    note: str | None = Field(default=None, max_length=300)
+    # From the preview the staff member looked at; approval must still match it.
+    preview_token: str | None = Field(default=None, max_length=64)

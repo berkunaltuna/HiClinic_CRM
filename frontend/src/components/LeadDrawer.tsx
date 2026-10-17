@@ -26,7 +26,7 @@ export function LeadDrawer({
   const [note, setNote] = useState("");
   const [emailTemplateId, setEmailTemplateId] = useState("");
   const [emailSubject, setEmailSubject] = useState("Appointment Confirmation");
-  const [emailBody, setEmailBody] = useState("Hi {{customer_name}},\n\nThis is to confirm your appointment on {{appointment_date}} at {{appointment_time}}.\n\nLocation: {{event_location}}\n\nKind regards,\nHealth Clinic Turkiye");
+  const [emailBody, setEmailBody] = useState("Hi {{first_name}},\n\nThis is to confirm your booking on {{event_date}}, {{slot}}.\n\nVenue: {{event_venue}}\n\nKind regards,\nHealth Clinic");
   const [emailPreviewBusy, setEmailPreviewBusy] = useState(false);
   const [attribution, setAttribution] = useState({
     lead_source: lead.lead_source || "",

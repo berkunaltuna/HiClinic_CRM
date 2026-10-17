@@ -13,6 +13,7 @@ from email.message import EmailMessage
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+from app.send_guard import check_automated_send
 from app.twilio_whatsapp import TwilioConfigError, send_whatsapp_template, send_whatsapp_text
 
 
@@ -194,6 +195,17 @@ def process_once(engine: Engine) -> int:
             ).rowcount
         if updated != 1:
             continue  # someone else took it
+
+        # Automated messages: last check that the recipient and booking still match.
+        with engine.begin() as conn:
+            stop_reason = check_automated_send(conn, msg_id)
+            if stop_reason:
+                conn.execute(
+                    text("UPDATE outbound_messages SET status = 'held', last_error = :why, updated_at = now() WHERE id = :id"),
+                    {"id": msg_id, "why": f"Stopped before sending: {stop_reason}"},
+                )
+        if stop_reason:
+            continue
 
         try:
             # fetch customer contact fields
