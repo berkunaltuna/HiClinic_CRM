@@ -28,6 +28,11 @@ def me(user: User = Depends(get_current_user)) -> MeOut:
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> TokenResponse:
     email_norm = payload.email.strip().lower()
+    if not settings.allow_public_registration and email_norm not in settings.admin_emails:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Registration is closed. Ask an administrator to create your account.",
+        )
     existing = db.query(User).filter(User.email == email_norm).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")

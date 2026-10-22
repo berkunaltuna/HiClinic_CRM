@@ -27,7 +27,10 @@ export default function RegisterPage() {
       toast.push("Account created");
       router.replace("/dashboard");
     } catch (err: any) {
-      toast.push(err?.message || "Register failed", "error");
+      toast.push(
+        err?.status === 403 ? "Registration is closed. Ask an administrator to create your account." : err?.message || "Register failed",
+        "error",
+      );
     } finally {
       setBusy(false);
     }
@@ -36,7 +39,7 @@ export default function RegisterPage() {
   return (
     <main className="card" style={{ width: "min(520px, 100vw)", padding: 18 }}>
       <div style={{ fontSize: 18, fontWeight: 900 }}>Create account</div>
-      <div className="muted" style={{ fontSize: 12 }}>Register to access your CRM workspace</div>
+      <div className="muted" style={{ fontSize: 12 }}>For the initial administrator only. Staff accounts are created by an administrator on the Users page.</div>
 
       <form onSubmit={onSubmit} className="stack" style={{ marginTop: 14 }}>
         <label className="stack" style={{ gap: 6 }}>

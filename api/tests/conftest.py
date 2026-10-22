@@ -16,6 +16,9 @@ os.environ.setdefault("ADMIN_EMAILS", "admin@example.com")
 os.environ.setdefault("EMAIL_PROVIDER", "fake")
 # Tests drive the automation tick explicitly instead of a background thread.
 os.environ.setdefault("AUTOMATIONS_SCHEDULER_ENABLED", "false")
+# Most tests create throwaway accounts through /auth/register; production keeps it closed
+# (test_auth.py covers the closed behaviour).
+os.environ.setdefault("ALLOW_PUBLIC_REGISTRATION", "true")
 # Patient photos go to a throwaway private directory, never a real store.
 os.environ.setdefault("PHOTO_STORAGE_DIR", tempfile.mkdtemp(prefix="crm-test-photos-"))
 

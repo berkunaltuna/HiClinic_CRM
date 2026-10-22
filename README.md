@@ -490,6 +490,10 @@ Leads are owned by `FACEBOOK_DEFAULT_OWNER_USER_ID` (or the newest user if unset
 
 Setup in Google Ads: campaign → **Assets** → lead form → **Lead delivery options** → **Webhook integration**; Webhook URL `https://<public-api-host>/webhooks/google/ads-lead`, Key = `GOOGLE_ADS_WEBHOOK_KEY`; click **Send test data**.
 
+## Staff accounts
+
+Public self-registration is closed (`ALLOW_PUBLIC_REGISTRATION=false`), because every account is CRM staff. Admins create accounts and set roles on the **Users** page (`POST /users`). Emails listed in `ADMIN_EMAILS` can still use `/register` to bootstrap the first admin.
+
 ## Patient photo requests
 
 Secure patient photo upload and doctor review: see [docs/patient-photos.md](docs/patient-photos.md) for roles, storage, configuration and deployment requirements.

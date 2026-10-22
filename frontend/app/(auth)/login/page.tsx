@@ -61,7 +61,7 @@ export default function LoginPage() {
         </button>
 
         <div className="muted" style={{ fontSize: 13, display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <span>New here? <Link href="/register">Create an account</Link></span>
+          <span>New here? Ask an administrator to create your account.</span>
           <Link href="/forgot-password">Forgot your password?</Link>
         </div>
       </form>
