@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from accounts import staff_token
+
 import io
 import threading
 import uuid
@@ -103,9 +105,7 @@ def row_for(name, phone="", email="", treatment="", event="Test Event", date="20
 
 def register(client, email=None):
     email = email or f"user_{uuid.uuid4().hex[:10]}@example.com"
-    r = client.post("/auth/register", json={"email": email, "password": "ChangeMe123!"})
-    assert r.status_code == 201, r.text
-    token = r.json()["access_token"]
+    token = staff_token(client, email)
     return {"Authorization": f"Bearer {token}"}, email
 
 

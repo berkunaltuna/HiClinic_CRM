@@ -16,9 +16,6 @@ os.environ.setdefault("ADMIN_EMAILS", "admin@example.com")
 os.environ.setdefault("EMAIL_PROVIDER", "fake")
 # Tests drive the automation tick explicitly instead of a background thread.
 os.environ.setdefault("AUTOMATIONS_SCHEDULER_ENABLED", "false")
-# Most tests create throwaway accounts through /auth/register; production keeps it closed
-# (test_auth.py covers the closed behaviour).
-os.environ.setdefault("ALLOW_PUBLIC_REGISTRATION", "true")
 # Patient photos go to a throwaway private directory, never a real store.
 os.environ.setdefault("PHOTO_STORAGE_DIR", tempfile.mkdtemp(prefix="crm-test-photos-"))
 
@@ -26,6 +23,7 @@ from app.main import app
 from app.db.base import Base
 from app.db.session import get_db
 from app.core.config import settings
+from accounts import staff_token
 
 
 @pytest.fixture(scope="session")
@@ -81,9 +79,7 @@ def user_credentials():
 
 @pytest.fixture()
 def token(client: TestClient, user_credentials) -> str:
-    r = client.post("/auth/register", json=user_credentials)
-    assert r.status_code == 201, r.text
-    return r.json()["access_token"]
+    return staff_token(client, user_credentials["email"], user_credentials["password"])
 
 
 @pytest.fixture()
@@ -99,17 +95,7 @@ def admin_credentials():
 
 @pytest.fixture()
 def admin_token(client: TestClient, admin_credentials) -> str:
-    # Try registering first
-    r = client.post("/auth/register", json=admin_credentials)
-    if r.status_code == 201:
-        return r.json()["access_token"]
-    # If already registered, login instead
-    if r.status_code == 400 and "already" in r.text.lower():
-        r2 = client.post("/auth/login", json=admin_credentials)
-        assert r2.status_code == 200, r2.text
-        return r2.json()["access_token"]
-    # Any other failure should fail the test setup
-    assert False, f"Unexpected register response: {r.status_code} {r.text}"
+    return staff_token(client, admin_credentials["email"], admin_credentials["password"], role="admin")
 
 @pytest.fixture()
 def admin_headers(admin_token: str) -> dict:

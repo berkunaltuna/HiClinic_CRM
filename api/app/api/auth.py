@@ -26,25 +26,17 @@ def me(user: User = Depends(get_current_user)) -> MeOut:
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> TokenResponse:
-    email_norm = payload.email.strip().lower()
-    if not settings.allow_public_registration and email_norm not in settings.admin_emails:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Registration is closed. Ask an administrator to create your account.",
-        )
-    existing = db.query(User).filter(User.email == email_norm).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
+def register(payload: RegisterRequest) -> TokenResponse:  # noqa: ARG001
+    """Public self-registration is permanently closed: every account is CRM staff.
 
-    role = UserRole.admin if email_norm in settings.admin_emails else UserRole.user
-    user = User(email=email_norm, password_hash=hash_password(payload.password), role=role)
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    token = create_access_token(str(user.id))
-    return TokenResponse(access_token=token)
+    Admins create accounts on the Users page (POST /users); the first admin is created
+    on the server with `python -m app.cli create-first-admin`. The route stays so old
+    clients get a clear answer instead of a 404.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Registration is closed. Ask an administrator to create your account.",
+    )
 
 
 @router.post("/login", response_model=TokenResponse)

@@ -58,8 +58,6 @@ services:
       PHOTO_PORTAL_SESSION_MINUTES: ${PHOTO_PORTAL_SESSION_MINUTES:-30}
       PHOTO_PORTAL_TRUST_PROXY_HEADERS: ${PHOTO_PORTAL_TRUST_PROXY_HEADERS:-false}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
-      # Staff accounts are created by an admin on the Users page.
-      ALLOW_PUBLIC_REGISTRATION: ${ALLOW_PUBLIC_REGISTRATION:-false}
     ports:
       - "8000:8000"
     volumes:

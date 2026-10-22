@@ -25,6 +25,7 @@ from app.db.models import (
     User,
 )
 from app.main import app
+from accounts import staff_token
 from app.services import photo_storage
 from app.services.photo_portal_auth import failed_attempts
 
@@ -46,12 +47,7 @@ def _reset_limiter():
 
 def staff(client, db, role: str) -> dict:
     creds = {"email": f"{role}_{uuid.uuid4().hex[:8]}@example.com", "password": "ChangeMe123!"}
-    r = client.post("/auth/register", json=creds)
-    assert r.status_code == 201, r.text
-    user = db.query(User).filter(User.email == creds["email"]).one()
-    user.role = role
-    db.commit()
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+    return {"Authorization": f"Bearer {staff_token(client, creds['email'], creds['password'], role=role)}"}
 
 
 def new_customer(client, headers, name="Ayse Patient") -> str:

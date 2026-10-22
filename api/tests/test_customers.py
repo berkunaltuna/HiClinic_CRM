@@ -1,3 +1,4 @@
+from accounts import staff_token
 from datetime import datetime, timezone
 
 
@@ -40,9 +41,7 @@ def test_customer_crud_roundtrip(client, auth_headers):
 def test_customer_ownership_enforced(client):
     # User A
     a = {"email": "a@example.com", "password": "ChangeMe123!"}
-    r = client.post("/auth/register", json=a)
-    assert r.status_code == 201, r.text
-    token_a = r.json()["access_token"]
+    token_a = staff_token(client, a["email"], a["password"])
     headers_a = {"Authorization": f"Bearer {token_a}"}
 
     # Create customer as A
@@ -56,9 +55,7 @@ def test_customer_ownership_enforced(client):
 
     # User B
     b = {"email": "b@example.com", "password": "ChangeMe123!"}
-    r = client.post("/auth/register", json=b)
-    assert r.status_code == 201, r.text
-    token_b = r.json()["access_token"]
+    token_b = staff_token(client, b["email"], b["password"])
     headers_b = {"Authorization": f"Bearer {token_b}"}
 
     # B should not access A's customer

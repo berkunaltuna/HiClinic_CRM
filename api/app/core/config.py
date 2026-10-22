@@ -45,11 +45,6 @@ class Settings:
         if o.strip()
     ]
 
-    # Public self-registration. Off by default: every account is CRM staff, so new accounts
-    # are created by an admin (POST /users). Emails in ADMIN_EMAILS can still register,
-    # which is how the first admin is bootstrapped.
-    allow_public_registration: bool = _get_bool("ALLOW_PUBLIC_REGISTRATION", False)
-
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
 
     # Lead visibility

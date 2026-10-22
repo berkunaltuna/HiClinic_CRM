@@ -38,10 +38,12 @@ Open:
 
 > Tip: set a token shell variable to avoid repetition.
 
-### 1) Register (returns token)
+### 1) Sign in (returns token)
+
+Public registration is closed; create the first admin with the CLI (see "Staff accounts") or ask an admin for an account.
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8000/auth/register \
+TOKEN=$(curl -s -X POST http://localhost:8000/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"email":"you@example.com","password":"ChangeMe123!"}' | \
   python -c "import sys, json; print(json.load(sys.stdin)['access_token'])")
@@ -129,7 +131,7 @@ cp .env.example .env
 
 - `JWT_SECRET_KEY` (use a strong random string)
 - `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` (if you are using SMTP)
-- `ADMIN_EMAILS` (comma-separated or a single email)
+- `ADMIN_EMAILS` (optional: existing accounts with these emails are given the admin role when they sign in; it never creates accounts)
 
 3) Start the stack:
 
@@ -324,7 +326,7 @@ The `test_phase4b4c.py` test covers:
 
 2) Authorize (JWT):
 
-- register/login, copy `access_token`
+- log in (`/auth/login`), copy `access_token`
 - click **Authorize** → paste: `Bearer <token>`
 
 3) Create a workflow:
@@ -492,7 +494,18 @@ Setup in Google Ads: campaign → **Assets** → lead form → **Lead delivery o
 
 ## Staff accounts
 
-Public self-registration is closed (`ALLOW_PUBLIC_REGISTRATION=false`), because every account is CRM staff. Admins create accounts and set roles on the **Users** page (`POST /users`). Emails listed in `ADMIN_EMAILS` can still use `/register` to bootstrap the first admin.
+Public self-registration is closed: `POST /auth/register` always returns 403, for every email
+(including addresses in `ADMIN_EMAILS`). Every account is CRM staff, so:
+
+- **First admin** (new installation, only while no admin exists), on the server:
+
+  ```bash
+  docker compose exec api python -m app.cli create-first-admin --email you@example.com
+  ```
+
+  It prompts for the password (or use `--password-stdin`) and refuses once any admin exists.
+- **Everyone else**: an admin creates the account and sets its role on the **Users** page (`POST /users`).
+- Existing accounts sign in and reset passwords as before.
 
 ## Patient photo requests
 
