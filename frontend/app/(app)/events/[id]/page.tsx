@@ -4,12 +4,13 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Topbar } from "@/components/Topbar";
 import { apiFetch } from "@/lib/api";
-import type { AppointmentOut, CustomerOut, EventOut } from "@/lib/types";
+import type { AppointmentOut, CustomerOut, EventOut, InboxCustomerOut } from "@/lib/types";
 import { useToast } from "@/components/Toast";
 import { WhatsAppQuickAction } from "@/components/WhatsAppQuickAction";
 import { EventImportWizard } from "@/components/EventImportWizard";
 import { EventExportDialog } from "@/components/EventExportDialog";
 import { EventSettingsPanel, GearIcon } from "@/components/EventSettingsPanel";
+import { LeadDrawer } from "@/components/LeadDrawer";
 
 function combine(day: string, time: string) {
   return `${day}T${time}:00`;
@@ -54,6 +55,7 @@ export default function EventDetailPage() {
   const [savingNotes, setSavingNotes] = useState(false);
   const [dragging, setDragging] = useState<AppointmentOut | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [selectedLead, setSelectedLead] = useState<InboxCustomerOut | null>(null);
 
   async function load() {
     const ev = await apiFetch<EventOut>(`/events/${id}`);
@@ -153,6 +155,22 @@ export default function EventDetailPage() {
       await load();
     } catch (err: any) {
       toast.push(err?.message || "Failed to move appointment", "error");
+    }
+  }
+
+  async function fetchLead(customerId: string) {
+    if (!event) return null;
+    const leads = await apiFetch<InboxCustomerOut[]>(`/inbox/customers?event_id=${event.id}&limit=10000`);
+    return leads.find((l) => l.id === customerId) || null;
+  }
+
+  async function openContact(appt: AppointmentOut) {
+    try {
+      const lead = await fetchLead(appt.customer_id);
+      if (lead) setSelectedLead(lead);
+      else router.push(`/contacts/${appt.customer_id}`);
+    } catch (err: any) {
+      toast.push(err?.message || "Failed to open contact", "error");
     }
   }
 
@@ -341,7 +359,14 @@ export default function EventDetailPage() {
                                       style={{ padding: "6px 0", borderTop: "1px solid var(--border)", display: "flex", gap: 12, alignItems: "flex-start", cursor: editingId !== appt.id ? "grab" : undefined, opacity: dragging?.id === appt.id ? 0.5 : 1 }}
                                     >
                                       <div style={{ flex: 1, minWidth: 0 }}>
-                                        <b>{appt.customer_name}</b>
+                                        <button
+                                          type="button"
+                                          onClick={() => void openContact(appt)}
+                                          title="Open contact"
+                                          style={{ all: "unset", fontWeight: 700, cursor: "pointer", color: "var(--primary)" }}
+                                        >
+                                          {appt.customer_name}
+                                        </button>
                                         <div className="muted">{appt.deal_treatment_interest || appt.appointment_type} · {appt.status}</div>
                                         {editingId === appt.id ? (
                                           <div style={{ marginTop: 6 }}>
@@ -374,6 +399,17 @@ export default function EventDetailPage() {
             </div>
           </section>
         </div>
+      )}
+
+      {selectedLead && (
+        <LeadDrawer
+          lead={selectedLead}
+          onClose={() => setSelectedLead(null)}
+          onUpdated={async () => {
+            setSelectedLead(await fetchLead(selectedLead.id));
+            await load();
+          }}
+        />
       )}
     </div>
   );
