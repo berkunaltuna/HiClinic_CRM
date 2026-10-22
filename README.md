@@ -490,6 +490,10 @@ Leads are owned by `FACEBOOK_DEFAULT_OWNER_USER_ID` (or the newest user if unset
 
 Setup in Google Ads: campaign → **Assets** → lead form → **Lead delivery options** → **Webhook integration**; Webhook URL `https://<public-api-host>/webhooks/google/ads-lead`, Key = `GOOGLE_ADS_WEBHOOK_KEY`; click **Send test data**.
 
+## Patient photo requests
+
+Secure patient photo upload and doctor review: see [docs/patient-photos.md](docs/patient-photos.md) for roles, storage, configuration and deployment requirements.
+
 ## Messaging automations
 
 Two built-in automations live under **Automations** in the sidebar (`/workflows`). Admins switch them on or off, pick channels, edit templates and set the follow-up delay there.

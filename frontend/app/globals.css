@@ -629,3 +629,28 @@ input:focus, select:focus, textarea:focus {
 .kanbanCol.kanbanColCollapsed {
   display: flex !important;
 }
+
+/* Visually hidden but available to screen readers. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Patient photo portal (public, no CRM chrome). */
+.portalShell { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 16px; }
+.portalDrop { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px 16px; text-align: center; background: var(--surface); }
+.portalDrop:focus-within, .portalDropActive { border-color: var(--primary); background: rgba(30, 103, 150, 0.04); }
+.portalGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.portalTile { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); display: grid; }
+.portalThumb { aspect-ratio: 1 / 1; background: #f3f6f8; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.portalThumb img { width: 100%; height: 100%; object-fit: cover; }
+.progress { height: 6px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.progress > div { height: 100%; background: var(--primary); transition: width .15s linear; }
+button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid rgba(30, 103, 150, 0.45); outline-offset: 2px; }

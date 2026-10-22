@@ -26,6 +26,8 @@ from app.api import (
     events,
     event_imports,
     automations,
+    photo_requests,
+    patient_portal,
 )
 
 api_router = APIRouter()
@@ -61,3 +63,7 @@ api_router.include_router(event_imports.router)
 
 # Messaging automations (appointment confirmation, lead follow-up)
 api_router.include_router(automations.router)
+
+# Patient photo requests: staff module + patient portal
+api_router.include_router(photo_requests.router)
+api_router.include_router(patient_portal.router)

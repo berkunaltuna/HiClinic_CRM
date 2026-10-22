@@ -47,10 +47,22 @@ services:
       WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
       WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
       WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
+      # Patient photos: private volume, never served statically (docs/patient-photos.md)
+      PHOTO_STORAGE_BACKEND: ${PHOTO_STORAGE_BACKEND:-local}
+      PHOTO_STORAGE_DIR: ${PHOTO_STORAGE_DIR:-/data/patient_photos}
+      PHOTO_MAX_FILE_SIZE_MB: ${PHOTO_MAX_FILE_SIZE_MB:-15}
+      PHOTO_MAX_FILES_PER_REQUEST: ${PHOTO_MAX_FILES_PER_REQUEST:-10}
+      PHOTO_ALLOWED_FORMATS: ${PHOTO_ALLOWED_FORMATS:-jpeg,png,webp,heic}
+      PHOTO_LINK_TTL_HOURS: ${PHOTO_LINK_TTL_HOURS:-72}
+      PHOTO_LINK_MAX_USES: ${PHOTO_LINK_MAX_USES:-10}
+      PHOTO_PORTAL_SESSION_MINUTES: ${PHOTO_PORTAL_SESSION_MINUTES:-30}
+      PHOTO_PORTAL_TRUST_PROXY_HEADERS: ${PHOTO_PORTAL_TRUST_PROXY_HEADERS:-false}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
     ports:
       - "8000:8000"
     volumes:
       - ./api:/app
+      - photo_data:/data/patient_photos
     depends_on:
       db:
         condition: service_healthy
@@ -111,6 +123,7 @@ services:
       WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-berk-whatsapp-verify}
       WHATSAPP_VALIDATE_SIGNATURE: "false"
       WHATSAPP_DEFAULT_OWNER_USER_ID: ${WHATSAPP_DEFAULT_OWNER_USER_ID:-}
+      PHOTO_STORAGE_DIR: /tmp/crm-test-photos
     volumes:
       - ./api:/app
       # The worker's send-time guard is tested from the API test suite.
@@ -125,3 +138,4 @@ services:
 
 volumes:
   db_data:
+  photo_data:

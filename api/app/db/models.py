@@ -14,6 +14,8 @@ class UserRole(str, Enum):
     coordinator = "coordinator"
     viewer = "viewer"
     user = "user"
+    # Clinical reviewer: the only role that may write clinical photo assessments.
+    doctor = "doctor"
 
 class User(Base):
     __tablename__ = "users"
@@ -800,3 +802,190 @@ class AutomationSend(Base):
         sa.Index("ix_automation_sends_customer", "customer_id"),
         sa.Index("ix_automation_sends_appointment", "appointment_id"),
     )
+
+
+# --- Patient photo requests -------------------------------------------------
+# See docs/patient-photos.md. Photo bytes live in private storage (storage_key);
+# only metadata is stored here. Rows are never hard-deleted: requests are
+# withdrawn/closed, photos and links are soft-deleted/revoked, and notes and
+# assessments keep every prior body in photo_entry_revisions.
+
+PHOTO_REQUEST_STATUSES = (
+    "requested",
+    "uploaded",
+    "in_review",
+    "more_photos_needed",
+    "reviewed",
+    "closed",
+    "withdrawn",
+)
+
+
+class PhotoRequest(Base):
+    __tablename__ = "photo_requests"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    # RESTRICT: deleting a customer must not silently erase clinical photo history.
+    customer_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False)
+    appointment_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("appointments.id", ondelete="SET NULL"), nullable=True)
+    # The treatment enquiry (deal) the photos relate to, if any.
+    deal_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("deals.id", ondelete="SET NULL"), nullable=True)
+    created_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # Patient-visible: what the request is for and which photos are needed.
+    title = sa.Column(sa.String(200), nullable=False)
+    instructions = sa.Column(sa.Text())
+    # Patient-visible message set with "more photos needed" (never internal notes).
+    patient_message = sa.Column(sa.Text())
+
+    status = sa.Column(sa.String(30), nullable=False, server_default="requested")
+    # Increments on each "more photos needed"; photos record the round they belong to.
+    upload_round = sa.Column(sa.Integer(), nullable=False, server_default="1")
+
+    consent_version = sa.Column(sa.String(40))
+    consent_accepted_at = sa.Column(sa.DateTime(timezone=True))
+    consent_link_id = sa.Column(sa.UUID(as_uuid=True), nullable=True)
+
+    submitted_at = sa.Column(sa.DateTime(timezone=True))
+    closed_at = sa.Column(sa.DateTime(timezone=True))
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    updated_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    customer = relationship("Customer")
+    appointment = relationship("Appointment")
+    deal = relationship("Deal")
+    created_by = relationship("User")
+
+    @property
+    def consent_status(self) -> str:
+        return "accepted" if self.consent_accepted_at is not None else "pending"
+
+    __table_args__ = (
+        sa.CheckConstraint(
+            "status IN ('requested','uploaded','in_review','more_photos_needed','reviewed','closed','withdrawn')",
+            name="ck_photo_requests_status",
+        ),
+        sa.Index("ix_photo_requests_customer", "customer_id", "created_at"),
+        sa.Index("ix_photo_requests_status", "status", "updated_at"),
+    )
+
+
+class PhotoAccessLink(Base):
+    """A patient portal link for one photo request. Only the token's SHA-256 is stored."""
+
+    __tablename__ = "photo_access_links"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    request_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("photo_requests.id", ondelete="CASCADE"), nullable=False)
+    token_hash = sa.Column(sa.String(64), nullable=False, unique=True)
+    created_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    expires_at = sa.Column(sa.DateTime(timezone=True), nullable=False)
+    max_uses = sa.Column(sa.Integer(), nullable=False)
+    use_count = sa.Column(sa.Integer(), nullable=False, server_default="0")
+    last_used_at = sa.Column(sa.DateTime(timezone=True))
+    revoked_at = sa.Column(sa.DateTime(timezone=True))
+    revoked_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    revoke_reason = sa.Column(sa.String(200))
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    __table_args__ = (sa.Index("ix_photo_access_links_request", "request_id"),)
+
+
+class PatientPhoto(Base):
+    __tablename__ = "patient_photos"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    request_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("photo_requests.id", ondelete="CASCADE"), nullable=False)
+    # Random, never derived from patient data or the original filename.
+    storage_key = sa.Column(sa.String(200), nullable=False, unique=True)
+    # Display metadata only (sanitised); never used for storage paths.
+    original_filename = sa.Column(sa.String(255))
+    content_type = sa.Column(sa.String(50), nullable=False)
+    size_bytes = sa.Column(sa.BigInteger(), nullable=False)
+    sha256 = sa.Column(sa.String(64), nullable=False)
+    upload_round = sa.Column(sa.Integer(), nullable=False, server_default="1")
+    uploaded_via_link_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("photo_access_links.id", ondelete="SET NULL"), nullable=True)
+    uploaded_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    # Soft delete: patient removed it before submitting, or staff hid it.
+    deleted_at = sa.Column(sa.DateTime(timezone=True))
+    deleted_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    delete_reason = sa.Column(sa.String(200))
+
+    __table_args__ = (sa.Index("ix_patient_photos_request", "request_id", "upload_round"),)
+
+
+class PhotoRequestNote(Base):
+    """Internal administrative note. Staff-only; never returned to the patient portal."""
+
+    __tablename__ = "photo_request_notes"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    request_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("photo_requests.id", ondelete="CASCADE"), nullable=False)
+    author_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    author_email = sa.Column(sa.String(320))
+    author_role = sa.Column(sa.String(30), nullable=False)
+    body = sa.Column(sa.Text(), nullable=False)
+    version = sa.Column(sa.Integer(), nullable=False, server_default="1")
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    updated_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    __table_args__ = (sa.Index("ix_photo_request_notes_request", "request_id", "created_at"),)
+
+
+class PhotoClinicalAssessment(Base):
+    """A doctor's clinical assessment. Kept apart from internal notes and patient content."""
+
+    __tablename__ = "photo_clinical_assessments"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    request_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("photo_requests.id", ondelete="CASCADE"), nullable=False)
+    author_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    author_email = sa.Column(sa.String(320))
+    author_role = sa.Column(sa.String(30), nullable=False)
+    body = sa.Column(sa.Text(), nullable=False)
+    version = sa.Column(sa.Integer(), nullable=False, server_default="1")
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    updated_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    __table_args__ = (sa.Index("ix_photo_clinical_assessments_request", "request_id", "created_at"),)
+
+
+class PhotoEntryRevision(Base):
+    """Every version of a note or assessment body, so edits never overwrite history."""
+
+    __tablename__ = "photo_entry_revisions"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    entry_type = sa.Column(sa.String(20), nullable=False)  # note | assessment
+    entry_id = sa.Column(sa.UUID(as_uuid=True), nullable=False)
+    request_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("photo_requests.id", ondelete="CASCADE"), nullable=False)
+    version = sa.Column(sa.Integer(), nullable=False)
+    body = sa.Column(sa.Text(), nullable=False)
+    editor_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    editor_email = sa.Column(sa.String(320))
+    editor_role = sa.Column(sa.String(30), nullable=False)
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    __table_args__ = (
+        sa.UniqueConstraint("entry_type", "entry_id", "version", name="uq_photo_entry_revisions_version"),
+        sa.Index("ix_photo_entry_revisions_entry", "entry_type", "entry_id"),
+    )
+
+
+class PhotoRequestStatusEvent(Base):
+    """Status history shown on the patient record."""
+
+    __tablename__ = "photo_request_status_events"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    request_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("photo_requests.id", ondelete="CASCADE"), nullable=False)
+    from_status = sa.Column(sa.String(30))
+    to_status = sa.Column(sa.String(30), nullable=False)
+    actor_type = sa.Column(sa.String(20), nullable=False)  # staff | patient
+    actor_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_email = sa.Column(sa.String(320))
+    actor_role = sa.Column(sa.String(30))
+    reason = sa.Column(sa.Text())
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    __table_args__ = (sa.Index("ix_photo_request_status_events_request", "request_id", "created_at"),)

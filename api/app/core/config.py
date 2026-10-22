@@ -124,6 +124,33 @@ class Settings:
     import_max_rows: int = int(os.getenv("IMPORT_MAX_ROWS", "1000"))
     import_max_file_size_mb: int = int(os.getenv("IMPORT_MAX_FILE_SIZE_MB", "10"))
 
+    # Patient photo requests (see docs/patient-photos.md).
+    # Only "local" is supported: a private directory outside any public/static path,
+    # e.g. a docker volume. Photo bytes never go in the database.
+    photo_storage_backend: str = os.getenv("PHOTO_STORAGE_BACKEND", "local").lower()
+    photo_storage_dir: str = os.getenv("PHOTO_STORAGE_DIR", "/data/patient_photos")
+    photo_max_file_size_mb: int = int(os.getenv("PHOTO_MAX_FILE_SIZE_MB", "15"))
+    # Per upload round: a "more photos needed" round starts a fresh allowance.
+    photo_max_files_per_request: int = int(os.getenv("PHOTO_MAX_FILES_PER_REQUEST", "10"))
+    photo_allowed_formats: list[str] = [
+        f.strip().lower()
+        for f in os.getenv("PHOTO_ALLOWED_FORMATS", "jpeg,png,webp,heic").split(",")
+        if f.strip()
+    ]
+    photo_link_ttl_hours: int = int(os.getenv("PHOTO_LINK_TTL_HOURS", "72"))
+    photo_link_max_uses: int = int(os.getenv("PHOTO_LINK_MAX_USES", "10"))
+    photo_portal_session_minutes: int = int(os.getenv("PHOTO_PORTAL_SESSION_MINUTES", "30"))
+    # Failed link exchanges allowed per client IP within the window before a 429.
+    photo_portal_max_failed_attempts: int = int(os.getenv("PHOTO_PORTAL_MAX_FAILED_ATTEMPTS", "10"))
+    photo_portal_lockout_minutes: int = int(os.getenv("PHOTO_PORTAL_LOCKOUT_MINUTES", "15"))
+    # Only enable behind a reverse proxy that overwrites X-Forwarded-For.
+    photo_portal_trust_proxy_headers: bool = _get_bool("PHOTO_PORTAL_TRUST_PROXY_HEADERS", False)
+    photo_consent_version: str = os.getenv("PHOTO_CONSENT_VERSION", "2026-10-v1")
+    photo_reviewer_description: str = os.getenv(
+        "PHOTO_REVIEWER_DESCRIPTION",
+        "a doctor from the Health Clinic Türkiye medical team",
+    )
+
     # Phase 4B: optional keyword-to-tag mapping for inbound messages.
     # Example: {"implant": "implant_interest", "hair": "hair_transplant"}
     _keyword_tags_raw: str = os.getenv("KEYWORD_TAGS_JSON", "{}")

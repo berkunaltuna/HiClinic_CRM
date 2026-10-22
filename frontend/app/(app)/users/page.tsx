@@ -7,7 +7,7 @@ import type { UserOut } from "@/lib/types";
 import { useToast } from "@/components/Toast";
 import { fmtDateTime } from "@/lib/dates";
 
-const ROLES = ["admin", "manager", "coordinator", "viewer", "user"];
+const ROLES = ["admin", "manager", "coordinator", "doctor", "viewer", "user"];
 
 export default function UsersPage() {
   const toast = useToast();

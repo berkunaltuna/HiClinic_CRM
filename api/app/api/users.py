@@ -13,7 +13,7 @@ from app.services.audit import record_audit
 
 router = APIRouter(prefix="/users", tags=["users"])
 
-ALLOWED_ROLES = {"admin", "manager", "coordinator", "viewer", "user"}
+ALLOWED_ROLES = {"admin", "manager", "coordinator", "viewer", "user", "doctor"}
 
 
 @router.get("", response_model=list[UserOut])

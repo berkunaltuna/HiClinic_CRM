@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import uuid
 from typing import Generator
 
@@ -15,6 +16,8 @@ os.environ.setdefault("ADMIN_EMAILS", "admin@example.com")
 os.environ.setdefault("EMAIL_PROVIDER", "fake")
 # Tests drive the automation tick explicitly instead of a background thread.
 os.environ.setdefault("AUTOMATIONS_SCHEDULER_ENABLED", "false")
+# Patient photos go to a throwaway private directory, never a real store.
+os.environ.setdefault("PHOTO_STORAGE_DIR", tempfile.mkdtemp(prefix="crm-test-photos-"))
 
 from app.main import app
 from app.db.base import Base

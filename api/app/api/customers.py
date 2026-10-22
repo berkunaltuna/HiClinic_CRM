@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
-from app.db.models import Customer, CustomerTag, Deal, OutboundMessage, FacebookLeadEvent, OutboundMessage, OutcomeEvent, User
+from app.db.models import Customer, CustomerTag, Deal, OutboundMessage, FacebookLeadEvent, OutboundMessage, OutcomeEvent, PhotoRequest, User
 from app.db.session import get_db
 from app.core.config import settings
 from app.schemas.customer import CustomerCreate, CustomerOut, CustomerUpdate
@@ -113,6 +113,14 @@ def delete_customer(
     user: User = Depends(get_current_user),
 ) -> Response:
     customer = _get_customer(db, customer_id, user)
+
+    # Photo requests hold clinical history (photos, assessments, audit); deleting the
+    # patient would erase it, so require the requests to be withdrawn/closed and kept.
+    if db.query(PhotoRequest.id).filter(PhotoRequest.customer_id == customer.id).first() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This contact has patient photo requests, which must be kept. Close or withdraw them instead of deleting the contact.",
+        )
 
     db.query(FacebookLeadEvent).filter(FacebookLeadEvent.customer_id == customer.id).update(
         {FacebookLeadEvent.customer_id: None},

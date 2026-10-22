@@ -17,6 +17,7 @@ from app.db.models import (
     Interaction,
     OutboundMessage,
     OutcomeEvent,
+    PhotoRequest,
     User,
 )
 from app.services.appointment_rules import lock_event_for_booking
@@ -224,6 +225,10 @@ def merge_customers(
     # history.
     db.query(Appointment).filter(Appointment.customer_id == loser.id).update(
         {Appointment.customer_id: survivor.id}, synchronize_session=False
+    )
+    # Photo requests (and their photos, notes and assessments) follow the patient.
+    db.query(PhotoRequest).filter(PhotoRequest.customer_id == loser.id).update(
+        {PhotoRequest.customer_id: survivor.id}, synchronize_session=False
     )
 
     # Consolidate unambiguous active duplicates (same event, same exact slot, same status/notes/
