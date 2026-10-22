@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 import logging
 
-from app.auth.security import decode_token
+from app.auth.security import decode_token, is_staff_access_token
 from app.db.models import User
 from app.db.session import get_db
 
@@ -24,6 +24,8 @@ def get_current_user(
 
     try:
         payload = decode_token(token)
+        if not is_staff_access_token(payload):
+            raise ValueError("Not an access token")
         sub = payload.get("sub")
         if not sub:
             raise ValueError("Missing sub")
