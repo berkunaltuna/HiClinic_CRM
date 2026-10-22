@@ -30,7 +30,6 @@ services:
       APP_VERSION: ${APP_VERSION:-0.0.1}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://crm:crm@db:5432/crm}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-change-me}
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@example.com}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
       SHARE_CUSTOMERS_ACROSS_USERS: ${SHARE_CUSTOMERS_ACROSS_USERS:-true}
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
@@ -77,7 +76,6 @@ services:
       APP_VERSION: ${APP_VERSION:-0.0.1}
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://crm:crm@db:5432/crm}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-change-me}
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@example.com}
       EMAIL_PROVIDER: ${EMAIL_PROVIDER:-smtp}
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -116,7 +114,6 @@ services:
       APP_VERSION: ${APP_VERSION:-0.0.1}
       DATABASE_URL: ${DATABASE_TEST_URL:-postgresql+psycopg://crm:crm@db:5432/crm_test}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-change-me}
-      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@example.com}
       EMAIL_PROVIDER: "fake"
       SHARE_CUSTOMERS_ACROSS_USERS: "false"
       PYTHONPATH: "/app"

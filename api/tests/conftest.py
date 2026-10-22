@@ -10,9 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# Phase 2: ensure we have an admin email available during tests.
 # Must be set BEFORE importing the app/config.
-os.environ.setdefault("ADMIN_EMAILS", "admin@example.com")
 os.environ.setdefault("EMAIL_PROVIDER", "fake")
 # Tests drive the automation tick explicitly instead of a background thread.
 os.environ.setdefault("AUTOMATIONS_SCHEDULER_ENABLED", "false")
@@ -89,7 +87,7 @@ def auth_headers(token: str) -> dict:
 
 @pytest.fixture()
 def admin_credentials():
-    # Must match ADMIN_EMAILS above
+    # Created directly with the admin role (see accounts.staff_token).
     return {"email": "admin@example.com", "password": "ChangeMe123!"}
 
 

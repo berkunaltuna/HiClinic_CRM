@@ -131,7 +131,6 @@ cp .env.example .env
 
 - `JWT_SECRET_KEY` (use a strong random string)
 - `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` (if you are using SMTP)
-- `ADMIN_EMAILS` (optional: existing accounts with these emails are given the admin role when they sign in; it never creates accounts)
 
 3) Start the stack:
 
@@ -495,7 +494,7 @@ Setup in Google Ads: campaign → **Assets** → lead form → **Lead delivery o
 ## Staff accounts
 
 Public self-registration is closed: `POST /auth/register` always returns 403, for every email
-(including addresses in `ADMIN_EMAILS`). Every account is CRM staff, so:
+Every account is CRM staff, so:
 
 - **First admin** (new installation, only while no admin exists), on the server:
 
@@ -505,7 +504,7 @@ Public self-registration is closed: `POST /auth/register` always returns 403, fo
 
   It prompts for the password (or use `--password-stdin`) and refuses once any admin exists.
 - **Everyone else**: an admin creates the account and sets its role on the **Users** page (`POST /users`).
-- Existing accounts sign in and reset passwords as before.
+- Existing accounts sign in and reset passwords as before. Roles, including admin, are stored on the account and only change when an admin edits them; signing in never changes a role. `ADMIN_EMAILS` is no longer used and can be removed from `.env`.
 
 ## Patient photo requests
 

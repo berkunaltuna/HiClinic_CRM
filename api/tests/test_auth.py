@@ -16,8 +16,8 @@ def _uniq(prefix: str) -> str:
 
 def test_public_registration_is_closed_for_everyone(client, db, monkeypatch):
     allowlisted = _uniq("allowlisted")
-    # Even an address listed in ADMIN_EMAILS cannot create an account, let alone an admin.
-    monkeypatch.setattr(settings, "admin_emails", [allowlisted, "admin@example.com"])
+    # Even an address listed in the old ADMIN_EMAILS setting cannot create an account.
+    monkeypatch.setenv("ADMIN_EMAILS", f"{allowlisted},admin@example.com")
     for email in (_uniq("stranger"), allowlisted, "admin@example.com"):
         r = client.post("/auth/register", json={"email": email, "password": DEFAULT_PASSWORD})
         assert r.status_code == 403, r.text
@@ -34,6 +34,39 @@ def test_login_returns_token(client, user_credentials):
     body = r.json()
     assert "access_token" in body
     assert body.get("token_type") == "bearer"
+
+
+def test_login_never_promotes_to_admin(client, db, monkeypatch, admin_headers):
+    """Regression: ADMIN_EMAILS used to turn any account with a listed email into an admin at login."""
+    email = _uniq("ordinary")
+    monkeypatch.setenv("ADMIN_EMAILS", email)
+    monkeypatch.setattr(settings, "admin_emails", [email], raising=False)  # as old config would have it
+    token = staff_token(client, email, role="coordinator")
+    for _ in range(2):
+        r = client.post("/auth/login", json={"email": email, "password": DEFAULT_PASSWORD})
+        assert r.status_code == 200
+        token = r.json()["access_token"]
+    assert client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).json()["role"] == "coordinator"
+    db.expire_all()
+    assert db.query(User).filter(User.email == email).one().role == UserRole.coordinator
+    # Admin-only routes stay closed to it.
+    assert client.get("/users", headers={"Authorization": f"Bearer {token}"}).status_code == 403
+
+
+def test_stored_admin_role_works_without_admin_emails(client, db, monkeypatch):
+    """Admins are whatever users.role says; nothing depends on ADMIN_EMAILS."""
+    monkeypatch.delenv("ADMIN_EMAILS", raising=False)
+    email = _uniq("stored_admin")
+    token = staff_token(client, email, role="admin")
+    assert client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).json()["role"] == "admin"
+    assert client.get("/users", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+    # An admin demoted in the database is no longer an admin, whatever the environment says.
+    monkeypatch.setenv("ADMIN_EMAILS", email)
+    user = db.query(User).filter(User.email == email).one()
+    user.role = UserRole.manager
+    db.commit()
+    token = client.post("/auth/login", json={"email": email, "password": DEFAULT_PASSWORD}).json()["access_token"]
+    assert client.get("/users", headers={"Authorization": f"Bearer {token}"}).status_code == 403
 
 
 def test_customers_requires_auth(client):

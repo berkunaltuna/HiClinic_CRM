@@ -46,12 +46,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
     if user is None or not verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    # If an existing user is now listed as an admin in env/config, upgrade role.
-    if email_norm in settings.admin_emails and getattr(user, "role", None) != UserRole.admin:
-        user.role = UserRole.admin
-        db.add(user)
-        db.commit()
-
+    # Login never changes roles; they are granted only by an admin or the first-admin CLI.
     token = create_access_token(str(user.id))
     return TokenResponse(access_token=token)
 
