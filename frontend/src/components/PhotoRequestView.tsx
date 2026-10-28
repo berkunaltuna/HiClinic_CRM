@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 import { useToast } from "@/components/Toast";
@@ -9,6 +9,9 @@ import {
   type IssuedLinkOut,
   type PatientPhotoOut,
   type PhotoRequestDetailOut,
+  type DetailChangeOut,
+  type PhotoLinkOptionsOut,
+  type PhotoRequestEditOut,
   EMAIL_STATUS_LABELS,
   dealSelectionFrom,
   errorDetail,
@@ -19,22 +22,38 @@ import {
 
 const can = (d: PhotoRequestDetailOut | null, p: string) => !!d?.permissions.includes(p);
 
-/** Staff view of one photo request. Every action is also enforced by the API. */
-export function PhotoRequestDrawer({
-  requestId,
-  onClose,
-  onChanged,
-}: {
-  requestId: string;
-  onClose: () => void;
-  onChanged?: () => void;
-}) {
+const CHANNEL = "hiclinic-photo-requests";
+
+/** Open a photo request in its own browser window (one window per request). */
+export function openPhotoRequestWindow(requestId: string) {
+  const win = window.open(`/photo-requests/${requestId}`, `photo-request-${requestId}`, "popup=yes,width=1000,height=1000");
+  win?.focus();
+}
+
+/** Lists call this to refresh when a request changes in its window. */
+export function onPhotoRequestChanged(handler: () => void): () => void {
+  if (typeof BroadcastChannel === "undefined") return () => undefined;
+  const ch = new BroadcastChannel(CHANNEL);
+  ch.onmessage = () => handler();
+  return () => ch.close();
+}
+
+function announceChange(requestId: string) {
+  if (typeof BroadcastChannel === "undefined") return;
+  const ch = new BroadcastChannel(CHANNEL);
+  ch.postMessage({ requestId });
+  ch.close();
+}
+
+/** Full-page staff view of one photo request (opened in its own window). Every action is also enforced by the API. */
+export function PhotoRequestView({ requestId }: { requestId: string }) {
+  const onChanged = () => announceChange(requestId);
   const toast = useToast();
   const [d, setD] = useState<PhotoRequestDetailOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [issuedUrl, setIssuedUrl] = useState<string | null>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
+  const [editing, setEditing] = useState(false);
 
   async function load() {
     try {
@@ -47,12 +66,20 @@ export function PhotoRequestDrawer({
 
   useEffect(() => {
     void load();
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId]);
+
+  useEffect(() => {
+    if (d) document.title = `${d.request.title} · ${d.customer_name}`;
+  }, [d]);
+
+  function closeWindow() {
+    window.close();
+    // Not opened by the CRM (e.g. a pasted link): browsers refuse to close it, so go back instead.
+    setTimeout(() => {
+      if (!window.closed) window.location.href = "/";
+    }, 150);
+  }
 
   async function act<T>(fn: () => Promise<T>, success: string): Promise<T | undefined> {
     setBusy(true);
@@ -142,17 +169,18 @@ export function PhotoRequestDrawer({
   const terminal = status === "closed" || status === "withdrawn";
 
   return (
-    <>
-      <div className="drawerOverlay" onClick={onClose} />
-      <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="photo-request-title" style={{ width: "min(760px, 100vw)" }}>
-        <div className="drawerHeader">
-          <div style={{ minWidth: 0 }}>
-            <div id="photo-request-title" style={{ fontWeight: 900 }}>{d?.request.title || "Photo request"}</div>
-            {d && <div className="muted" style={{ fontSize: 12 }}>{d.customer_name} · created {fmtDateTime(d.request.created_at)}{d.request.created_by_email ? ` by ${d.request.created_by_email}` : ""}</div>}
-          </div>
-          <button ref={closeRef} className="btn" onClick={onClose} aria-label="Close photo request">Close</button>
+    <div className="requestWindow">
+      <header className="requestWindowHeader">
+        <div style={{ minWidth: 0 }}>
+          <h1 style={{ fontSize: 18, fontWeight: 900, margin: 0 }}>{d?.request.title || "Photo request"}</h1>
+          {d && <div className="muted" style={{ fontSize: 12 }}>{d.customer_name} · created {fmtDateTime(d.request.created_at)}{d.request.created_by_email ? ` by ${d.request.created_by_email}` : ""}</div>}
         </div>
-        <div className="drawerBody stack" style={{ gap: 14 }}>
+        <span style={{ display: "flex", gap: 8 }}>
+          <button className="btn" onClick={() => void load()} aria-label="Refresh this request">Refresh</button>
+          <button className="btn" onClick={closeWindow} aria-label="Close this window">Close window</button>
+        </span>
+      </header>
+      <main className="requestWindowBody stack" style={{ gap: 14 }}>
           {error ? (
             <div role="alert" className="card" style={{ padding: 12 }}>{error}</div>
           ) : !d ? (
@@ -172,6 +200,23 @@ export function PhotoRequestDrawer({
                 <div className="muted" style={{ fontSize: 12 }}>
                   Doctor: {d.assigned_doctor ? (d.assigned_doctor.display_name || d.assigned_doctor.email) : "not assigned"}
                 </div>
+                {editing ? (
+                  <EditDetailsForm
+                    detail={d}
+                    onCancel={() => setEditing(false)}
+                    onSaved={(next) => {
+                      setD(next);
+                      setEditing(false);
+                      onChanged();
+                    }}
+                  />
+                ) : d.can_edit_details ? (
+                  <div>
+                    <button className="btn" onClick={() => setEditing(true)}>Edit details</button>
+                  </div>
+                ) : d.details_locked_reason ? (
+                  <div className="muted" style={{ fontSize: 12 }}>Details can no longer be edited: {d.details_locked_reason}</div>
+                ) : null}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {can(d, "photo_request.manage_status") && (status === "uploaded" || status === "reviewed") && (
                     <button className="btn" disabled={busy} onClick={() => changeStatus("in_review")}>{status === "reviewed" ? "Reopen review" : "Start review"}</button>
@@ -183,7 +228,7 @@ export function PhotoRequestDrawer({
                     <button className="btn btnPrimary" disabled={busy || !d.assessments?.length} title={!d.assessments?.length ? "Add a clinical assessment first" : undefined} onClick={() => changeStatus("reviewed")}>Mark reviewed</button>
                   )}
                   {can(d, "photo_request.manage_status") && !terminal && (
-                    <button className="btn" disabled={busy} onClick={() => changeStatus("closed")}>Close</button>
+                    <button className="btn" disabled={busy} onClick={() => changeStatus("closed")}>Close request</button>
                   )}
                   {can(d, "photo_request.manage_status") && !terminal && status !== "reviewed" && (
                     <button className="btn btnDanger" disabled={busy} onClick={() => changeStatus("withdrawn")}>Withdraw</button>
@@ -254,6 +299,8 @@ export function PhotoRequestDrawer({
                 </div>
               </section>
 
+              {d.detail_changes.length > 0 && <DetailChanges changes={d.detail_changes} customerId={d.request.customer_id} />}
+
               <section aria-labelledby="history-h" className="card">
                 <div className="cardHeader" id="history-h" style={{ fontWeight: 900 }}>History</div>
                 <div className="cardBody">
@@ -272,9 +319,8 @@ export function PhotoRequestDrawer({
               </section>
             </>
           )}
-        </div>
-      </aside>
-    </>
+      </main>
+    </div>
   );
 }
 
@@ -502,6 +548,148 @@ function EntriesSection({
             <button className="btn btnPrimary" type="submit" disabled={saving || !draft.trim()}>{saving ? "Saving…" : "Add"}</button>
           </form>
         )}
+      </div>
+    </section>
+  );
+}
+
+
+const FIELD_LABELS: Record<string, string> = {
+  title: "Title",
+  instructions: "Photos needed",
+  appointment_id: "Appointment",
+  deal_id: "Treatment enquiry",
+};
+
+function useLinkOptions(customerId: string): PhotoLinkOptionsOut {
+  const [options, setOptions] = useState<PhotoLinkOptionsOut>({ appointments: [], deals: [] });
+  useEffect(() => {
+    apiFetch<PhotoLinkOptionsOut>(`/customers/${customerId}/photo-requests/link-options`).then(setOptions).catch(() => undefined);
+  }, [customerId]);
+  return options;
+}
+
+/** Edit title, instructions and linked appointment/enquiry (the API allows it only before any upload). */
+function EditDetailsForm({ detail, onCancel, onSaved }: { detail: PhotoRequestDetailOut; onCancel: () => void; onSaved: (d: PhotoRequestDetailOut) => void }) {
+  const toast = useToast();
+  const r = detail.request;
+  const options = useLinkOptions(r.customer_id);
+  const [title, setTitle] = useState(r.title);
+  const [instructions, setInstructions] = useState(r.instructions || "");
+  const [appointmentId, setAppointmentId] = useState(r.appointment_id || "");
+  const [dealId, setDealId] = useState(r.deal_id || "");
+  // Ticked by default once the wording the patient sees changes, until staff choose otherwise.
+  const [notify, setNotify] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const changes: Record<string, unknown> = {};
+  if (title.trim() !== r.title) changes.title = title.trim();
+  if ((instructions.trim() || null) !== (r.instructions || null)) changes.instructions = instructions.trim() || null;
+  if ((appointmentId || null) !== (r.appointment_id || null)) changes.appointment_id = appointmentId || null;
+  if ((dealId || null) !== (r.deal_id || null)) changes.deal_id = dealId || null;
+  const wordingChanged = "title" in changes || "instructions" in changes;
+  const notifyPatient = notify ?? wordingChanged;
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    if (!Object.keys(changes).length) {
+      onCancel();
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const out = await apiFetch<PhotoRequestEditOut>(`/photo-requests/${r.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ...changes, notify_patient: notifyPatient }),
+      });
+      toast.push(out.email ? `Details saved and the patient was emailed (${out.email.to_email})` : "Details saved");
+      onSaved(out.detail);
+    } catch (err: any) {
+      // Nothing was saved (the edit and the email succeed or fail together).
+      setError(errorDetail(err, "Could not save the changes"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={save} style={{ display: "grid", gap: 8, padding: 12, border: "1px solid var(--border)", borderRadius: 12, background: "var(--surface)" }} aria-label="Edit request details">
+      <label htmlFor="edit-title" style={{ fontSize: 12, fontWeight: 700 }}>Title (shown to the patient)</label>
+      <input id="edit-title" className="formField" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} required />
+      <label htmlFor="edit-instructions" style={{ fontSize: 12, fontWeight: 700 }}>Which photos are needed (shown to the patient)</label>
+      <textarea id="edit-instructions" rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)} maxLength={4000} />
+      <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+          <label htmlFor="edit-appt" style={{ fontSize: 12, fontWeight: 700 }}>Appointment</label>
+          <select id="edit-appt" value={appointmentId} onChange={(e) => setAppointmentId(e.target.value)}>
+            <option value="">None</option>
+            {options.appointments.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </div>
+        <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+          <label htmlFor="edit-deal" style={{ fontSize: 12, fontWeight: 700 }}>Treatment enquiry</label>
+          <select id="edit-deal" value={dealId} onChange={(e) => setDealId(e.target.value)}>
+            <option value="">None</option>
+            {options.deals.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+          </select>
+        </div>
+      </div>
+      <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13 }}>
+        <input type="checkbox" checked={notifyPatient} onChange={(e) => setNotify(e.target.checked)} />
+        <span>
+          Email the patient about this change
+          <span className="muted" style={{ display: "block", fontSize: 12 }}>
+            Sends a fresh link to the updated request. Links already sent keep working.
+          </span>
+        </span>
+      </label>
+      {error && <div role="alert" style={{ color: "var(--danger)", fontSize: 13 }}>{error} Nothing was saved.</div>}
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn btnPrimary" type="submit" disabled={saving || !title.trim() || !Object.keys(changes).length}>
+          {saving ? "Saving…" : notifyPatient ? "Save and email patient" : "Save changes"}
+        </button>
+        <button className="btn" type="button" onClick={onCancel} disabled={saving}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+/** Every edit of the request details: previous and new values, who and when. */
+function DetailChanges({ changes, customerId }: { changes: DetailChangeOut[]; customerId: string }) {
+  const options = useLinkOptions(customerId);
+  const label = (field: string, value: unknown): string => {
+    if (value === null || value === undefined || value === "") return "—";
+    if (field === "appointment_id") return options.appointments.find((o) => o.id === value)?.label || "an appointment";
+    if (field === "deal_id") return options.deals.find((o) => o.id === value)?.label || "an enquiry";
+    return String(value);
+  };
+  return (
+    <section aria-labelledby="detail-changes-h" className="card">
+      <div className="cardHeader" id="detail-changes-h" style={{ fontWeight: 900 }}>Detail changes</div>
+      <div className="cardBody">
+        <ol style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 10 }}>
+          {changes.map((c, i) => (
+            <li key={i} style={{ fontSize: 13 }}>
+              <div className="muted">
+                {fmtDateTime(c.created_at)} · {c.changed_by_email || "staff"} ({c.changed_by_role}){c.patient_notified ? " · patient emailed" : ""}
+              </div>
+              <dl style={{ margin: "4px 0 0", display: "grid", gap: 4 }}>
+                {Object.keys(c.after).map((f) => (
+                  <div key={f}>
+                    <dt style={{ fontWeight: 700 }}>{FIELD_LABELS[f] || f}</dt>
+                    <dd style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                      <span className="muted" style={{ textDecoration: "line-through" }}>{label(f, (c.before as any)[f])}</span>
+                      {" → "}
+                      <span>{label(f, (c.after as any)[f])}</span>
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </li>
+          ))}
+        </ol>
       </div>
     </section>
   );

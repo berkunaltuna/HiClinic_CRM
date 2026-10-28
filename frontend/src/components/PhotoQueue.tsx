@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
-import { PhotoRequestDrawer } from "@/components/PhotoRequestDrawer";
+import { onPhotoRequestChanged, openPhotoRequestWindow } from "@/components/PhotoRequestView";
 import { EMAIL_STATUS_LABELS, type PhotoRequestQueueItem, photoStatusLabel } from "@/lib/photoRequests";
 
 const FILTERS: { label: string; value: string }[] = [
@@ -19,7 +19,6 @@ export function PhotoQueue({ patientHref }: { patientHref: (customerId: string) 
   const [filter, setFilter] = useState(FILTERS[0].value);
   const [items, setItems] = useState<PhotoRequestQueueItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [openId, setOpenId] = useState<string | null>(null);
 
   async function load() {
     setItems(null);
@@ -33,6 +32,8 @@ export function PhotoQueue({ patientHref }: { patientHref: (customerId: string) 
   }
 
   useEffect(() => { void load(); }, [filter]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Refresh when the request is changed in its own window.
+  useEffect(() => onPhotoRequestChanged(() => void load()), [filter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section className="card">
@@ -67,7 +68,7 @@ export function PhotoQueue({ patientHref }: { patientHref: (customerId: string) 
                     </td>
                     <td className="muted">{r.photo_count}</td>
                     <td className="muted">{fmtDateTime(r.updated_at)}</td>
-                    <td><button className="btn" onClick={() => setOpenId(r.id)} aria-label={`Open ${r.title} for ${r.customer_name}`}>Open</button></td>
+                    <td><button className="btn" onClick={() => openPhotoRequestWindow(r.id)} aria-label={`Open ${r.title} for ${r.customer_name} in a new window`}>Open</button></td>
                   </tr>
                 ))}
               </tbody>
@@ -75,7 +76,6 @@ export function PhotoQueue({ patientHref }: { patientHref: (customerId: string) 
           </div>
         )}
       </div>
-      {openId && <PhotoRequestDrawer requestId={openId} onClose={() => setOpenId(null)} onChanged={() => void load()} />}
     </section>
   );
 }

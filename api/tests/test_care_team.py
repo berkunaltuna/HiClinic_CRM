@@ -677,3 +677,152 @@ def test_assistant_sees_upload_status_and_proformas_but_not_photo_files_or_asses
     # No audit record of the assistant viewing a photo was ever created.
     db.expire_all()
     assert not [a for a in db.query(AuditLog).filter(AuditLog.action.in_(["patient_photo.viewed", "patient_photo.downloaded"])) if str(a.actor_user_id) == uid(client, asst)]
+
+
+# --- editing request details ------------------------------------------------------------------
+
+
+def test_who_can_edit_request_details(client, db, team, monkeypatch):
+    rid = new_request(client, team["coord"], team["pa"])["request"]["id"]
+    for n, who in enumerate(("admin", "coord", "doc_a")):
+        r = client.patch(f"/photo-requests/{rid}", json={"title": f"Edited by {who}"}, headers=team[who])
+        assert r.status_code == 200 and r.json()["changed_fields"] == ["title"], (who, r.text)
+    monkeypatch.setattr(settings, "share_customers_across_users", True)  # manager reaches the patient like in production
+    assert client.patch(f"/photo-requests/{rid}", json={"title": "Edited by manager"}, headers=staff(client, "manager")).status_code == 200
+    monkeypatch.setattr(settings, "share_customers_across_users", False)
+
+    assert client.patch(f"/photo-requests/{rid}", json={"title": "x"}, headers=team["assistant"]).status_code == 403
+    assert client.patch(f"/photo-requests/{rid}", json={"title": "x"}, headers=staff(client, "viewer")).status_code == 403
+    assert client.patch(f"/photo-requests/{rid}", json={"title": "x"}, headers=staff(client, "user")).status_code == 403
+    assert client.patch(f"/photo-requests/{rid}", json={"title": "x"}, headers=team["doc_b"]).status_code == 404  # not their patient
+    # The detail view tells the UI who may edit.
+    assert client.get(f"/photo-requests/{rid}", headers=team["doc_a"]).json()["can_edit_details"] is True
+    assert client.get(f"/photo-requests/{rid}", headers=team["assistant"]).json()["can_edit_details"] is False
+
+
+def test_edit_history_audit_portal_and_existing_link(client, db, team):
+    coord = team["coord"]
+    issued = new_request(client, coord, team["pa"])
+    rid = issued["request"]["id"]
+    ph = portal_session(client, issued["portal_url"])
+    other = patient(client, coord, "Other", "other@example.com")
+    other_deal = client.post(f"/customers/{other}/deals", json={"amount": 0, "treatment_interest": "Teeth"}, headers=coord).json()["id"]
+    own_deal = client.post(f"/customers/{team['pa']}/deals", json={"amount": 0, "treatment_interest": "Hair"}, headers=coord).json()["id"]
+
+    # Linked appointment/enquiry must belong to the patient.
+    assert client.patch(f"/photo-requests/{rid}", json={"deal_id": other_deal}, headers=coord).status_code == 422
+    assert client.patch(f"/photo-requests/{rid}", json={"title": "   "}, headers=coord).status_code == 422
+
+    r = client.patch(
+        f"/photo-requests/{rid}",
+        json={"title": "Crown photos", "instructions": "Top of the head only.", "deal_id": own_deal},
+        headers=team["doc_a"],
+    )
+    assert r.status_code == 200 and r.json()["changed_fields"] == ["deal_id", "instructions", "title"]
+    change = r.json()["detail"]["detail_changes"][-1]
+    assert change["before"] == {"title": "Hair assessment", "instructions": "Front and top.", "deal_id": None}
+    assert change["after"] == {"title": "Crown photos", "instructions": "Top of the head only.", "deal_id": own_deal}
+    assert change["changed_by_role"] == "doctor" and change["changed_by_email"].startswith("doctor_") and change["created_at"]
+    assert change["patient_notified"] is False
+
+    # Unlinking works; an edit that changes nothing records nothing.
+    assert client.patch(f"/photo-requests/{rid}", json={"deal_id": None}, headers=coord).json()["changed_fields"] == ["deal_id"]
+    r = client.patch(f"/photo-requests/{rid}", json={"title": "Crown photos"}, headers=coord)
+    assert r.json()["changed_fields"] == [] and len(r.json()["detail"]["detail_changes"]) == 2
+
+    # Audit: which fields changed, not the text itself.
+    db.expire_all()
+    rows = [a for a in db.query(AuditLog).filter(AuditLog.entity_id == uuid.UUID(rid), AuditLog.action == "photo_request.details_updated")]
+    assert len(rows) == 2 and rows[0].meta["fields"] == ["deal_id", "instructions", "title"]
+    assert "Top of the head" not in json_dump(rows)
+
+    # The patient sees the current wording through the link they already have.
+    body = client.get("/portal/photo-request", headers=ph).json()
+    assert body["title"] == "Crown photos" and body["instructions"] == "Top of the head only."
+    assert client.post("/portal/photo-request/session", json={"token": issued["portal_url"].split("#token=")[1]}).status_code == 200
+
+
+def json_dump(rows) -> str:
+    import json
+
+    return json.dumps([[r.before, r.after, r.meta] for r in rows])
+
+
+def test_edit_can_email_patient_and_keeps_old_link(client, db, team, monkeypatch):
+    coord = team["coord"]
+    issued = new_request(client, coord, team["pa"])
+    rid = issued["request"]["id"]
+    old_token = issued["portal_url"].split("#token=")[1]
+    msgs_before = db.query(OutboundMessage).filter(OutboundMessage.customer_id == uuid.UUID(team["pa"])).count()
+
+    r = client.patch(f"/photo-requests/{rid}", json={"instructions": "New wording", "notify_patient": True}, headers=coord)
+    assert r.status_code == 200 and r.json()["email"]["status"] == "queued"
+    db.expire_all()
+    msg = db.query(OutboundMessage).filter(OutboundMessage.customer_id == uuid.UUID(team["pa"])).order_by(OutboundMessage.created_at.desc()).first()
+    assert db.query(OutboundMessage).filter(OutboundMessage.customer_id == uuid.UUID(team["pa"])).count() == msgs_before + 1
+    assert msg.template.name == "photo_request_updated"
+    new_link = msg.variables["portal_link"]
+    # Both the earlier link and the new one work.
+    assert client.post("/portal/photo-request/session", json={"token": old_token}).status_code == 200
+    ph = portal_session(client, new_link)
+    assert client.get("/portal/photo-request", headers=ph).json()["instructions"] == "New wording"
+    assert r.json()["detail"]["detail_changes"][-1]["patient_notified"] is True
+    assert "photo_request.update_email_queued" in audits(db, entity_id=rid)
+
+    # Email impossible -> nothing is saved.
+    db.query(Customer).filter(Customer.id == uuid.UUID(team["pa"])).update({Customer.email: None})
+    db.commit()
+    r = client.patch(f"/photo-requests/{rid}", json={"instructions": "Not saved", "notify_patient": True}, headers=coord)
+    assert r.status_code == 422
+    db.expire_all()
+    assert db.get(PhotoRequest, uuid.UUID(rid)).instructions == "New wording"
+    db.query(Customer).filter(Customer.id == uuid.UUID(team["pa"])).update({Customer.email: "alpha@example.com"})
+    db.commit()
+
+    def boom(*a, **k):
+        raise RuntimeError("queue down")
+
+    monkeypatch.setattr(emailing, "queue_outbound_email", boom)
+    r = client.patch(f"/photo-requests/{rid}", json={"title": "Not saved either", "notify_patient": True}, headers=coord)
+    assert r.status_code == 503
+    db.expire_all()
+    req = db.get(PhotoRequest, uuid.UUID(rid))
+    assert req.title == "Hair assessment" and len(client.get(f"/photo-requests/{rid}", headers=coord).json()["detail_changes"]) == 1
+    # Without the email, the same edit saves.
+    monkeypatch.undo()
+    assert client.patch(f"/photo-requests/{rid}", json={"title": "Saved"}, headers=coord).status_code == 200
+
+
+def test_details_locked_once_photos_are_uploaded(client, db, team):
+    coord, doc = team["coord"], team["doc_a"]
+    issued = new_request(client, coord, team["pa"])
+    rid = issued["request"]["id"]
+    ph = portal_session(client, issued["portal_url"])
+    assert client.post("/portal/photo-request/consent", json={"version": settings.photo_consent_version, "accepted": True}, headers=ph).status_code == 204
+
+    # Uploaded but not yet sent: already locked.
+    r = client.put("/portal/photo-request/photos", params={"filename": "a.jpg"}, content=JPEG, headers={**ph, "Content-Type": "image/jpeg"})
+    assert r.status_code == 201
+    photo_id = r.json()["id"]
+    r = client.patch(f"/photo-requests/{rid}", json={"title": "Too late"}, headers=coord)
+    assert r.status_code == 409 and "Request more photos" in r.json()["detail"]
+    d = client.get(f"/photo-requests/{rid}", headers=coord).json()
+    assert d["can_edit_details"] is False and "Request more photos" in d["details_locked_reason"]
+
+    # If the patient removes it again before sending, editing is possible again.
+    assert client.delete(f"/portal/photo-request/photos/{photo_id}", headers=ph).status_code == 204
+    assert client.patch(f"/photo-requests/{rid}", json={"title": "Still in time"}, headers=coord).status_code == 200
+
+    # After submission (and in later rounds) the details stay as they were.
+    upload_and_submit(client, ph)
+    for who in ("coord", "doc_a", "admin"):
+        assert client.patch(f"/photo-requests/{rid}", json={"title": "Too late"}, headers=team[who]).status_code == 409
+    assert client.post(f"/photo-requests/{rid}/status", json={"status": "more_photos_needed", "patient_message": "One more of the crown"}, headers=doc).status_code == 200
+    assert client.patch(f"/photo-requests/{rid}", json={"instructions": "Changed"}, headers=coord).status_code == 409
+    db.expire_all()
+    assert db.get(PhotoRequest, uuid.UUID(rid)).title == "Still in time"
+
+    # Closed / withdrawn requests cannot be edited either.
+    rid2 = new_request(client, coord, team["pa"])["request"]["id"]
+    assert client.post(f"/photo-requests/{rid2}/status", json={"status": "withdrawn"}, headers=coord).status_code == 200
+    assert client.patch(f"/photo-requests/{rid2}", json={"title": "x"}, headers=coord).status_code == 409

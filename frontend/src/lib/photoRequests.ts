@@ -147,7 +147,23 @@ export type PhotoRequestDetailOut = {
   history: StatusEventOut[];
   emails: PhotoEmailOut[];
   assigned_doctor: { id: UUID; email: string; display_name: string | null } | null;
+  can_edit_details: boolean;
+  details_locked_reason: string | null;
+  detail_changes: DetailChangeOut[];
 };
+
+export type EditableDetails = { title?: string; instructions?: string | null; appointment_id?: UUID | null; deal_id?: UUID | null };
+
+export type DetailChangeOut = {
+  before: EditableDetails;
+  after: EditableDetails;
+  changed_by_email: string | null;
+  changed_by_role: string;
+  patient_notified: boolean;
+  created_at: string;
+};
+
+export type PhotoRequestEditOut = { detail: PhotoRequestDetailOut; changed_fields: string[]; email: PhotoEmailOut | null };
 
 export type LinkOption = { id: UUID; label: string };
 export type PhotoLinkOptionsOut = { appointments: LinkOption[]; deals: LinkOption[] };

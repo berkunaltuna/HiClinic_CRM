@@ -29,6 +29,7 @@ Enforced in `api/app/services/photo_permissions.py` on every request; the UI onl
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
 | See request list, status, history, upload status | ✓ all | ✓ | ✓ | assigned | their doctors' patients | ✓ | ✓ |
 | Create request, email/copy link, revoke links | ✓ | ✓ | ✓ | assigned | | | |
+| Edit title / instructions / linked appointment or enquiry (before any upload) | ✓ | ✓ | ✓ | assigned | | | |
 | View / download photos | ✓ | ✓ | ✓ | assigned | | | |
 | Read & write internal notes | ✓ | ✓ | ✓ | assigned | | | |
 | Read clinical assessments | ✓ | ✓ | ✓ | assigned | | | |
@@ -56,6 +57,25 @@ Enforced in `api/app/services/photo_permissions.py` on every request; the UI onl
   the `doctor_assistant` role.
 - Notes and assessments can only be edited by their author. Every version is kept
   (`photo_entry_revisions`) and shown as edit history.
+
+## Editing request details
+
+**Edit details** in the request window changes the title, the photo instructions and the
+linked appointment or enquiry (`PATCH /photo-requests/{id}`). Admins, managers,
+coordinators and the assigned doctor can use it; assistants can't.
+
+- It works only while the request is **Requested** and the patient has no photo on it, not
+  even one uploaded but not yet sent. Once photos exist, or in a later "more photos" round,
+  the original details stay as they were and the API returns 409 with the reason. Use
+  **Request more photos** for new or changed instructions.
+- Every edit is kept in `photo_request_detail_changes`: previous and new values of the changed
+  fields, who (email and role) and when. It is shown as "Detail changes" on the request. The
+  audit entry `photo_request.details_updated` records which fields changed, not the text.
+- The patient portal always shows the current wording, so links already sent keep working.
+- **Email the patient about this change** is ticked by default when the title or instructions
+  change. It queues the `photo_request_updated` email with a fresh link. Unlike Resend, this
+  doesn't revoke earlier links. The edit and the email succeed or fail together, so if the email
+  can't be queued nothing is saved and the reason is shown. Untick it to save without emailing.
 
 ## Emailing the upload link
 
@@ -231,7 +251,7 @@ Care team and documents: `care_team.doctor_assigned/unassigned` (customer),
 (document), `pipeline.stage_changed` with `source: photo_request_email` (customer).
 
 Photo requests are written to `audit_logs` with `entity_type="photo_request"` and the request id
-(including `photo_request.email_queued` and `.email_not_sent`):
+(including `photo_request.email_queued`, `.update_email_queued`, `.email_not_sent` and `.details_updated`):
 `photo_request.created`, `.link_issued`, `.link_revoked`, `.status_changed` (staff and patient),
 `.consent_recorded`, `.note_created/updated`, `.assessment_created/updated`,
 `photo_portal.session_opened`, `photo_portal.access_denied`, `patient_photo.uploaded`,

@@ -153,6 +153,29 @@ class StatusEventOut(BaseModel):
         from_attributes = True
 
 
+class PhotoRequestEditIn(BaseModel):
+    """Only the fields sent are changed; send null to unlink an appointment/enquiry."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    instructions: str | None = Field(default=None, max_length=4000)
+    appointment_id: UUID | None = None
+    deal_id: UUID | None = None
+    # Email the patient a link to the updated request (earlier links keep working).
+    notify_patient: bool = False
+
+
+class DetailChangeOut(BaseModel):
+    before: dict
+    after: dict
+    changed_by_email: str | None = None
+    changed_by_role: str
+    patient_notified: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class PhotoRequestDetailOut(BaseModel):
     request: PhotoRequestOut
     customer_name: str
@@ -165,6 +188,16 @@ class PhotoRequestDetailOut(BaseModel):
     history: list[StatusEventOut]
     emails: list[PhotoEmailOut] = []
     assigned_doctor: AssignedDoctorOut | None = None
+    # Whether the caller may edit details right now, and if not (but could otherwise), why.
+    can_edit_details: bool = False
+    details_locked_reason: str | None = None
+    detail_changes: list[DetailChangeOut] = []
+
+
+class PhotoRequestEditOut(BaseModel):
+    detail: PhotoRequestDetailOut
+    changed_fields: list[str]
+    email: PhotoEmailOut | None = None
 
 
 class PhotoRequestQueueItem(PhotoRequestOut):

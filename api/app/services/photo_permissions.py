@@ -26,6 +26,8 @@ PERMISSIONS: dict[str, frozenset[str]] = {
     # Create a request / issue a link / email the patient the link.
     "photo_request.create": STAFF_WRITERS,
     "photo_request.manage_links": STAFF_WRITERS,
+    # Title, instructions, linked appointment/enquiry; only before any photo is uploaded.
+    "photo_request.edit_details": STAFF_WRITERS,
     # in_review, closed, withdrawn.
     "photo_request.manage_status": STAFF_WRITERS,
     "photo.view": STAFF_WRITERS,

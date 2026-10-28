@@ -665,3 +665,9 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px soli
 .careMain { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
 .careMain > * { min-width: 0; }
 .tableWrap { overflow-x: auto; }
+
+/* Photo request detail, opened in its own window. */
+.requestWindow { min-height: 100vh; background: var(--bg); }
+.requestWindowHeader { position: sticky; top: 0; z-index: 10; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); }
+.requestWindowBody { max-width: 980px; margin: 0 auto; padding: 16px; }
+.requestWindowBody > * { min-width: 0; }

@@ -874,6 +874,25 @@ class PhotoRequest(Base):
     )
 
 
+class PhotoRequestDetailChange(Base):
+    """One edit of a request's details (title, instructions, linked appointment/enquiry).
+    `before`/`after` hold only the fields that changed."""
+
+    __tablename__ = "photo_request_detail_changes"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    request_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("photo_requests.id", ondelete="CASCADE"), nullable=False)
+    changed_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    changed_by_email = sa.Column(sa.String(320))
+    changed_by_role = sa.Column(sa.String(30), nullable=False)
+    before = sa.Column(sa.JSON(), nullable=False)
+    after = sa.Column(sa.JSON(), nullable=False)
+    patient_notified = sa.Column(sa.Boolean(), nullable=False, server_default=sa.false())
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    __table_args__ = (sa.Index("ix_photo_request_detail_changes_request", "request_id", "created_at"),)
+
+
 class PhotoRequestEmail(Base):
     """One email of a portal link through the outbox. Unique per link, so a retried send
     can never queue a second email for the same link."""

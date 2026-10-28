@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 import { useToast } from "@/components/Toast";
-import { IssuedLink, PhotoRequestDrawer } from "@/components/PhotoRequestDrawer";
+import { IssuedLink, onPhotoRequestChanged, openPhotoRequestWindow } from "@/components/PhotoRequestView";
 import { NewPhotoRequestForm } from "@/components/NewPhotoRequestForm";
 import { type CarePatientDetailOut, EMAIL_STATUS_LABELS, photoStatusLabel } from "@/lib/photoRequests";
 
@@ -17,7 +17,6 @@ export default function DoctorPatientPage() {
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [issued, setIssued] = useState<string | null>(null);
-  const [openId, setOpenId] = useState<string | null>(null);
 
   async function load() {
     try {
@@ -29,6 +28,8 @@ export default function DoctorPatientPage() {
   }
 
   useEffect(() => { void load(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Refresh when the request is changed in its own window.
+  useEffect(() => onPhotoRequestChanged(() => void load()), [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error) {
     return (
@@ -82,7 +83,7 @@ export default function DoctorPatientPage() {
                       </td>
                       <td className="muted">{r.photo_count}</td>
                       <td className="muted">{fmtDateTime(r.updated_at)}</td>
-                      <td><button className="btn" onClick={() => setOpenId(r.id)} aria-label={`Open ${r.title}`}>Open</button></td>
+                      <td><button className="btn" onClick={() => openPhotoRequestWindow(r.id)} aria-label={`Open ${r.title} in a new window`}>Open</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -91,7 +92,6 @@ export default function DoctorPatientPage() {
           )}
         </div>
       </section>
-      {openId && <PhotoRequestDrawer requestId={openId} onClose={() => setOpenId(null)} onChanged={() => void load()} />}
     </>
   );
 }

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 import { useToast } from "@/components/Toast";
-import { IssuedLink, PhotoRequestDrawer } from "@/components/PhotoRequestDrawer";
+import { IssuedLink, onPhotoRequestChanged, openPhotoRequestWindow } from "@/components/PhotoRequestView";
 import { NewPhotoRequestForm } from "@/components/NewPhotoRequestForm";
 import { EMAIL_STATUS_LABELS, type IssuedLinkOut, type PhotoRequestOut, photoStatusLabel } from "@/lib/photoRequests";
 
@@ -14,7 +14,6 @@ export function PhotoRequestsCard({ customerId }: { customerId: string }) {
   const [items, setItems] = useState<PhotoRequestOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
   const [issued, setIssued] = useState<string | null>(null);
 
   async function load() {
@@ -27,6 +26,8 @@ export function PhotoRequestsCard({ customerId }: { customerId: string }) {
   }
 
   useEffect(() => { void load(); }, [customerId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Refresh when the request is changed in its own window.
+  useEffect(() => onPhotoRequestChanged(() => void load()), [customerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section className="card" aria-labelledby="photo-requests-h">
@@ -74,7 +75,7 @@ export function PhotoRequestsCard({ customerId }: { customerId: string }) {
                     {r.email_status && <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>{EMAIL_STATUS_LABELS[r.email_status] || r.email_status}</div>}
                   </td>
                   <td className="muted">{fmtDateTime(r.updated_at)}</td>
-                  <td style={{ width: 1 }}><button className="btn" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setOpenId(r.id)} aria-label={`Open photo request ${r.title}`}>Open</button></td>
+                  <td style={{ width: 1 }}><button className="btn" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => openPhotoRequestWindow(r.id)} aria-label={`Open photo request ${r.title} in a new window`}>Open</button></td>
                 </tr>
               ))}
             </tbody>
@@ -82,7 +83,6 @@ export function PhotoRequestsCard({ customerId }: { customerId: string }) {
           </div>
         )}
       </div>
-      {openId && <PhotoRequestDrawer requestId={openId} onClose={() => setOpenId(null)} onChanged={() => void load()} />}
     </section>
   );
 }

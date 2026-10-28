@@ -41,6 +41,18 @@ TEMPLATE_BODY = (
     "Please don't reply to this email with photos. Only upload them through the link above.\n\n"
     "If you weren't expecting this message, please contact the clinic."
 )
+# Sent when staff edit a request's details; carries a fresh link and leaves earlier links working.
+UPDATED_TEMPLATE_NAME = "photo_request_updated"
+UPDATED_TEMPLATE_SUBJECT = "Your photo request has been updated"
+UPDATED_TEMPLATE_BODY = (
+    "Hi {{first_name}},\n\n"
+    "The clinic has updated its request for photos. Please open your personal, secure link to see what is needed now:\n\n"
+    "{{portal_link}}\n\n"
+    "The link expires on {{link_expires}}. Any link we sent you earlier for this request still works too. "
+    "Please do not forward it to anyone.\n\n"
+    "Please don't reply to this email with photos. Only upload them through the link above.\n\n"
+    "If you weren't expecting this message, please contact the clinic."
+)
 LINK_PLACEHOLDER = "{{portal_link}}"
 # Outbox statuses that mean "this email is on its way or delivered".
 LIVE_STATUSES = ("queued", "sending", "sent")
@@ -87,20 +99,20 @@ def valid_patient_email(customer: Customer) -> str:
         raise HTTPException(status_code=422, detail=f"The patient's email address ({raw}) is not valid. Correct it on the contact first.")
 
 
-def email_template(db: Session) -> Template:
-    tpl = (
-        db.query(Template)
-        .filter(Template.channel == "email", Template.name == TEMPLATE_NAME, Template.language == "und")
-        .first()
+def email_template(db: Session, *, updated: bool = False) -> Template:
+    """The link email template (or, with updated=True, the "request updated" one)."""
+    name, subject, body = (
+        (UPDATED_TEMPLATE_NAME, UPDATED_TEMPLATE_SUBJECT, UPDATED_TEMPLATE_BODY) if updated else (TEMPLATE_NAME, TEMPLATE_SUBJECT, TEMPLATE_BODY)
     )
+    tpl = db.query(Template).filter(Template.channel == "email", Template.name == name, Template.language == "und").first()
     if tpl is None:
-        tpl = Template(channel="email", name=TEMPLATE_NAME, subject=TEMPLATE_SUBJECT, body=TEMPLATE_BODY, category="transactional", language="und")
+        tpl = Template(channel="email", name=name, subject=subject, body=body, category="transactional", language="und")
         db.add(tpl)
         db.flush()
     if LINK_PLACEHOLDER not in (tpl.body or ""):
         raise HTTPException(
             status_code=503,
-            detail=f"The '{TEMPLATE_NAME}' email template no longer contains {LINK_PLACEHOLDER}. Fix it on the Templates page.",
+            detail=f"The '{name}' email template no longer contains {LINK_PLACEHOLDER}. Fix it on the Templates page.",
         )
     return tpl
 

@@ -22,6 +22,7 @@ from app.db.models import (
     Customer,
     Deal,
     DoctorProfile,
+    PhotoRequestDetailChange,
     PhotoRequestEmail,
     PatientPhoto,
     PhotoAccessLink,
@@ -38,6 +39,9 @@ from app.schemas.photo_request import (
     EntryOut,
     EntryRevisionOut,
     AssignedDoctorOut,
+    DetailChangeOut,
+    PhotoRequestEditIn,
+    PhotoRequestEditOut,
     IssuedLinkOut,
     PhotoEmailOut,
     SendEmailIn,
@@ -211,11 +215,11 @@ def _revoke_active_links(db: Session, req: PhotoRequest, user: User | None, reas
     return revoked
 
 
-def _issue_link(db: Session, req: PhotoRequest, user: User) -> tuple[PhotoAccessLink, str]:
-    """Create a fresh portal link (revoking older ones); returns the raw token once."""
+def _issue_link(db: Session, req: PhotoRequest, user: User, *, revoke_previous: bool = True) -> tuple[PhotoAccessLink, str]:
+    """Create a fresh portal link (by default revoking older ones); returns the raw token once."""
     if req.status not in UPLOADABLE_STATUSES:
         raise HTTPException(status_code=409, detail="Links can only be issued while photos are being requested")
-    revoked = _revoke_active_links(db, req, user, "replaced")
+    revoked = _revoke_active_links(db, req, user, "replaced") if revoke_previous else []
     token = generate_link_token()
     link = PhotoAccessLink(
         request_id=req.id,
@@ -325,6 +329,13 @@ def _detail(db: Session, req: PhotoRequest, user: User) -> PhotoRequestDetailOut
             email=assignment.doctor.email,
             display_name=profile.display_name if profile is not None else None,
         )
+    locked = _details_locked_reason(db, req)
+    changes = (
+        db.query(PhotoRequestDetailChange)
+        .filter(PhotoRequestDetailChange.request_id == req.id)
+        .order_by(PhotoRequestDetailChange.created_at.asc())
+        .all()
+    )
     return PhotoRequestDetailOut(
         request=_request_out(db, req),
         customer_name=req.customer.name,
@@ -336,7 +347,21 @@ def _detail(db: Session, req: PhotoRequest, user: User) -> PhotoRequestDetailOut
         history=[StatusEventOut.model_validate(e) for e in history],
         emails=[_email_out(e) for e in emails],
         assigned_doctor=assigned_doctor,
+        can_edit_details=has_permission(user, "photo_request.edit_details") and locked is None,
+        details_locked_reason=locked if has_permission(user, "photo_request.edit_details") else None,
+        detail_changes=[DetailChangeOut.model_validate(c) for c in changes],
     )
+
+
+def _details_locked_reason(db: Session, req: PhotoRequest) -> str | None:
+    """Details are editable only while nothing has been uploaded against them."""
+    if req.status != "requested":
+        if req.status in ("closed", "withdrawn"):
+            return f"This request is {req.status}."
+        return "Photos have already been uploaded for this request. Use Request more photos for new or changed instructions."
+    if db.query(PatientPhoto.id).filter(PatientPhoto.request_id == req.id, PatientPhoto.deleted_at.is_(None)).first() is not None:
+        return "The patient has started uploading photos for this request. Use Request more photos for new or changed instructions."
+    return None
 
 
 def _touch(req: PhotoRequest) -> None:
@@ -445,22 +470,32 @@ def create_photo_request(
 
 
 def _send_link_email(
-    db: Session, req: PhotoRequest, user: User, *, deal_id: UUID | None = None, resend: bool = False
+    db: Session,
+    req: PhotoRequest,
+    user: User,
+    *,
+    deal_id: UUID | None = None,
+    resend: bool = False,
+    updated: bool = False,
 ) -> tuple[PhotoRequestEmail, bool, dict | None]:
-    """Email the patient a fresh link via the outbox; see app.services.photo_request_email."""
+    """Email the patient a fresh link via the outbox; see app.services.photo_request_email.
+
+    updated=True: the "request updated" email. Earlier links keep working and the pipeline
+    is not touched (the request was already sent).
+    """
     to_email = emailing.check_can_email(req)
-    if not resend:
+    if not resend and not updated:
         existing = emailing.existing_live_email(db, req)
         if existing is not None:
             return existing, True, None
-    deal = emailing.resolve_deal(db, req, deal_id)
-    template = emailing.email_template(db)
+    deal = None if updated else emailing.resolve_deal(db, req, deal_id)
+    template = emailing.email_template(db, updated=updated)
 
     savepoint = db.begin_nested()
     try:
         if deal is not None and req.deal_id != deal.id:
             req.deal_id = deal.id
-        link, token = _issue_link(db, req, user)
+        link, token = _issue_link(db, req, user, revoke_previous=not updated)
         name = (req.customer.name or "").strip()
         msg = emailing.queue_outbound_email(
             db,
@@ -478,12 +513,12 @@ def _send_link_email(
         row = PhotoRequestEmail(request_id=req.id, link_id=link.id, outbound_message_id=msg.id, to_email=to_email, sent_by_user_id=user.id)
         db.add(row)
         db.flush()
-        pipeline = emailing.advance_pipeline(db, req.customer, user, req.id)
+        pipeline = None if updated else emailing.advance_pipeline(db, req.customer, user, req.id)
         _touch(req)
         record_audit(
             db,
             actor=user,
-            action="photo_request.email_queued",
+            action="photo_request.update_email_queued" if updated else "photo_request.email_queued",
             entity_type=ENTITY,
             entity_id=req.id,
             metadata={
@@ -502,6 +537,101 @@ def _send_link_email(
         logger.exception("Could not queue photo request email")
         raise HTTPException(status_code=503, detail="The email could not be queued, so the request was not sent. Please try again.")
     return row, False, pipeline
+
+
+EDITABLE_FIELDS = ("title", "instructions", "appointment_id", "deal_id")
+
+
+@router.patch("/photo-requests/{request_id}", response_model=PhotoRequestEditOut)
+def edit_photo_request(
+    request_id: UUID,
+    payload: PhotoRequestEditIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_authenticated_user),
+) -> PhotoRequestEditOut:
+    """Edit title, instructions and linked appointment/enquiry before any photo is uploaded.
+
+    Each edit keeps the previous and new values (photo_request_detail_changes) and is audited.
+    Earlier portal links keep working; with notify_patient the patient also gets an email with
+    a fresh link to the updated request.
+    """
+    require_permission(user, "photo_request.edit_details")
+    req = _get_request(db, request_id, user, lock=True)
+    locked = _details_locked_reason(db, req)
+    if locked:
+        raise HTTPException(status_code=409, detail=locked)
+
+    sent = payload.model_fields_set
+    proposed = {}
+    if "title" in sent:
+        if payload.title is None or not payload.title.strip():
+            raise HTTPException(status_code=422, detail="The title cannot be empty")
+        proposed["title"] = payload.title.strip()
+    if "instructions" in sent:
+        proposed["instructions"] = (payload.instructions or "").strip() or None
+    if "appointment_id" in sent:
+        if payload.appointment_id is not None:
+            appt = db.get(Appointment, payload.appointment_id)
+            if appt is None or appt.customer_id != req.customer_id:
+                raise HTTPException(status_code=422, detail="Appointment does not belong to this patient")
+        proposed["appointment_id"] = payload.appointment_id
+    if "deal_id" in sent:
+        if payload.deal_id is not None:
+            deal = db.get(Deal, payload.deal_id)
+            if deal is None or deal.customer_id != req.customer_id:
+                raise HTTPException(status_code=422, detail="Treatment enquiry does not belong to this patient")
+        proposed["deal_id"] = payload.deal_id
+
+    def _plain(v):
+        return str(v) if isinstance(v, UUID) else v
+
+    before = {f: _plain(getattr(req, f)) for f in EDITABLE_FIELDS if f in proposed and getattr(req, f) != proposed[f]}
+    after = {f: _plain(proposed[f]) for f in before}
+    if not before:
+        return PhotoRequestEditOut(detail=_detail(db, req, user), changed_fields=[])
+
+    savepoint = db.begin_nested()
+    try:
+        for f in before:
+            setattr(req, f, proposed[f])
+        _touch(req)
+        change = PhotoRequestDetailChange(
+            request_id=req.id,
+            changed_by_user_id=user.id,
+            changed_by_email=user.email,
+            changed_by_role=role_of(user),
+            before=before,
+            after=after,
+            patient_notified=payload.notify_patient,
+        )
+        db.add(change)
+        db.flush()
+        # Text changes are in the history table; the audit records which fields changed.
+        record_audit(
+            db,
+            actor=user,
+            action="photo_request.details_updated",
+            entity_type=ENTITY,
+            entity_id=req.id,
+            before={f: (v if f.endswith("_id") else {"length": len(v or "")}) for f, v in before.items()},
+            after={f: (v if f.endswith("_id") else {"length": len(v or "")}) for f, v in after.items()},
+            metadata={"change_id": str(change.id), "fields": sorted(before), "patient_notified": payload.notify_patient},
+        )
+        email_row = None
+        if payload.notify_patient:
+            email_row, _dup, _ = _send_link_email(db, req, user, updated=True)
+        savepoint.commit()
+    except HTTPException:
+        savepoint.rollback()
+        db.rollback()
+        raise
+    db.commit()
+    db.refresh(req)
+    return PhotoRequestEditOut(
+        detail=_detail(db, req, user),
+        changed_fields=sorted(before),
+        email=_email_out(email_row) if email_row is not None else None,
+    )
 
 
 @router.post("/photo-requests/{request_id}/send-email", response_model=IssuedLinkOut)
