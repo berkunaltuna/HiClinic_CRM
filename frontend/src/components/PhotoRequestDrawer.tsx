@@ -9,6 +9,9 @@ import {
   type IssuedLinkOut,
   type PatientPhotoOut,
   type PhotoRequestDetailOut,
+  EMAIL_STATUS_LABELS,
+  dealSelectionFrom,
+  errorDetail,
   fetchStaffPhotoUrl,
   fmtBytes,
   photoStatusLabel,
@@ -98,6 +101,37 @@ export function PhotoRequestDrawer({
     }
   }
 
+  async function emailLink(resend = false, dealId?: string) {
+    setBusy(true);
+    try {
+      const out = await apiFetch<IssuedLinkOut>(`/photo-requests/${requestId}/send-email`, {
+        method: "POST",
+        body: JSON.stringify({ resend, deal_id: dealId || null }),
+      });
+      if (out.duplicate) {
+        toast.push(`An email with a valid link is already ${EMAIL_STATUS_LABELS[out.email?.status || ""]?.toLowerCase() || "on its way"}. Nothing new was sent.`);
+      } else {
+        toast.push(`Link emailed to ${out.email?.to_email}${out.pipeline?.changed ? " · pipeline moved to Photos Requested" : ""}`);
+      }
+      onChanged?.();
+      await load();
+    } catch (err: any) {
+      const sel = dealSelectionFrom(err);
+      if (sel) {
+        const choice = window.prompt(
+          `${sel.message}\n\n${sel.deals.map((d, i) => `${i + 1}. ${d.label}`).join("\n")}\n\nType the number of the enquiry:`,
+        );
+        const picked = choice ? sel.deals[Number(choice) - 1] : undefined;
+        setBusy(false);
+        if (picked) await emailLink(resend, picked.id);
+        return;
+      }
+      toast.push(errorDetail(err, "The email was not sent"), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function revokeLink(linkId: string) {
     if (!confirm("Revoke this link? The patient will no longer be able to use it.")) return;
     await act(() => apiFetch(`/photo-requests/${requestId}/links/${linkId}/revoke`, { method: "POST", body: JSON.stringify({}) }), "Link revoked");
@@ -135,6 +169,9 @@ export function PhotoRequestDrawer({
                 </div>
                 {d.request.instructions && <div className="muted" style={{ whiteSpace: "pre-wrap" }}><b>Patient instructions:</b> {d.request.instructions}</div>}
                 {d.request.patient_message && <div className="muted" style={{ whiteSpace: "pre-wrap" }}><b>Last message to patient:</b> {d.request.patient_message}</div>}
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Doctor: {d.assigned_doctor ? (d.assigned_doctor.display_name || d.assigned_doctor.email) : "not assigned"}
+                </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {can(d, "photo_request.manage_status") && (status === "uploaded" || status === "reviewed") && (
                     <button className="btn" disabled={busy} onClick={() => changeStatus("in_review")}>{status === "reviewed" ? "Reopen review" : "Start review"}</button>
@@ -179,13 +216,28 @@ export function PhotoRequestDrawer({
               )}
 
               <section aria-labelledby="links-h" className="card">
-                <div className="cardHeader" id="links-h" style={{ fontWeight: 900, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div className="cardHeader" id="links-h" style={{ fontWeight: 900, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   Patient portal links
                   {can(d, "photo_request.manage_links") && (status === "requested" || status === "more_photos_needed") && (
-                    <button className="btn" disabled={busy} onClick={issueLink}>New link</button>
+                    <span style={{ display: "flex", gap: 6 }}>
+                      <button className="btn btnPrimary" disabled={busy} onClick={() => emailLink(false)}>Email link to patient</button>
+                      {d.emails.length > 0 && <button className="btn" disabled={busy} onClick={() => confirm("Send a new link? The previous link stops working.") && emailLink(true)}>Resend</button>}
+                      <button className="btn" disabled={busy} onClick={issueLink}>Copy new link</button>
+                    </span>
                   )}
                 </div>
                 <div className="cardBody" style={{ display: "grid", gap: 8 }}>
+                  {d.emails.length > 0 && (
+                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13 }} aria-label="Emails sent">
+                      {d.emails.map((e) => (
+                        <li key={e.id}>
+                          <b>{EMAIL_STATUS_LABELS[e.status || ""] || e.status || "Email"}</b>{" "}
+                          <span className="muted">to {e.to_email} · {fmtDateTime(e.created_at)}{e.sent_by_email ? ` by ${e.sent_by_email}` : ""}</span>
+                          {e.status === "failed" && e.last_error && <div style={{ color: "var(--danger)", fontSize: 12 }}>{e.last_error}</div>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {issuedUrl && <IssuedLink url={issuedUrl} />}
                   {d.links.map((l) => (
                     <div key={l.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", fontSize: 13 }}>

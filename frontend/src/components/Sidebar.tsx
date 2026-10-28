@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useMe } from "@/lib/useMe";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard" },
@@ -18,7 +19,11 @@ const NAV = [
   { href: "/outbox", label: "Outbox" },
   { href: "/activity", label: "Activity" },
   { href: "/users", label: "Users" },
+  { href: "/care-team", label: "Care team" },
 ];
+
+// Pages the API only serves to admins; hidden from everyone else.
+const ADMIN_ONLY = new Set(["/users", "/care-team"]);
 
 type SidebarProps = {
   collapsed: boolean;
@@ -27,6 +32,8 @@ type SidebarProps = {
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
+  const { me } = useMe();
+  const nav = NAV.filter((n) => !ADMIN_ONLY.has(n.href) || me?.role === "admin");
 
   return (
     <aside className={`sidebar ${collapsed ? "sidebarCollapsed" : ""}`.trim()}>
@@ -62,7 +69,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       </div>
 
       <nav className="sidebarNav" aria-label="Sidebar navigation">
-        {NAV.map((n) => {
+        {nav.map((n) => {
           const active = pathname === n.href || pathname?.startsWith(n.href + "/");
           return (
             <Link

@@ -12,6 +12,8 @@ class PhotoRequestCreate(BaseModel):
     instructions: str | None = Field(default=None, max_length=4000)
     appointment_id: UUID | None = None
     deal_id: UUID | None = None
+    # Email the link to the patient through the outbox (otherwise staff copy the link).
+    send_email: bool = False
 
 
 class LinkOption(BaseModel):
@@ -41,6 +43,10 @@ class PhotoRequestOut(BaseModel):
     closed_at: datetime | None = None
     created_by_email: str | None = None
     photo_count: int = 0
+    # Latest emailed link: outbox status (queued/sending/sent/failed/held), when and by whom.
+    email_status: str | None = None
+    emailed_at: datetime | None = None
+    emailed_by_email: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -60,12 +66,41 @@ class PhotoAccessLinkOut(BaseModel):
         from_attributes = True
 
 
+class PhotoEmailOut(BaseModel):
+    id: UUID
+    to_email: str
+    status: str | None = None
+    last_error: str | None = None
+    sent_by_email: str | None = None
+    created_at: datetime
+
+
 class IssuedLinkOut(BaseModel):
-    """Returned once when a link is issued; the token itself is never stored or shown again."""
+    """Returned once when a link is issued; the token itself is never stored or shown again.
+
+    When the link was emailed instead, portal_url is omitted and `email` describes the send.
+    """
 
     request: PhotoRequestOut
-    link: PhotoAccessLinkOut
-    portal_url: str
+    link: PhotoAccessLinkOut | None = None
+    portal_url: str | None = None
+    email: PhotoEmailOut | None = None
+    # True when an email for the current link was already on its way (nothing new was sent).
+    duplicate: bool = False
+    pipeline: dict | None = None
+
+
+class SendEmailIn(BaseModel):
+    # Required when the patient has several open enquiries and none is linked yet.
+    deal_id: UUID | None = None
+    # Send a fresh link even though one is already on its way (revokes the previous link).
+    resend: bool = False
+
+
+class AssignedDoctorOut(BaseModel):
+    id: UUID
+    email: str
+    display_name: str | None = None
 
 
 class PatientPhotoOut(BaseModel):
@@ -128,6 +163,8 @@ class PhotoRequestDetailOut(BaseModel):
     assessments: list[EntryOut] | None = None
     links: list[PhotoAccessLinkOut]
     history: list[StatusEventOut]
+    emails: list[PhotoEmailOut] = []
+    assigned_doctor: AssignedDoctorOut | None = None
 
 
 class PhotoRequestQueueItem(PhotoRequestOut):
@@ -188,6 +225,26 @@ class PortalLimitsOut(BaseModel):
     allowed_mime_types: list[str]
 
 
+class PortalProformaOut(BaseModel):
+    available: bool
+    filename: str | None = None
+    uploaded_at: datetime | None = None
+
+
+class PortalDoctorOut(BaseModel):
+    """Only fields an admin filled in and marked visible to patients."""
+
+    display_name: str
+    title: str | None = None
+    specialty: str | None = None
+    bio: str | None = None
+
+
+class PortalDocumentLinkOut(BaseModel):
+    url: str
+    expires_at: datetime
+
+
 class PortalRequestOut(BaseModel):
     """Everything the patient may see. Deliberately has no notes, assessments or staff data."""
 
@@ -203,6 +260,8 @@ class PortalRequestOut(BaseModel):
     photos: list[PortalPhotoOut]
     submitted_at: datetime | None = None
     created_at: datetime
+    proforma: PortalProformaOut
+    doctor: PortalDoctorOut | None = None
 
 
 class PortalConsentIn(BaseModel):

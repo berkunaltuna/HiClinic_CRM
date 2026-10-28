@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiFetch, setToken } from "@/lib/api";
+import { CARE_HOME, fetchMe } from "@/lib/useMe";
 import type { AuthTokenOut } from "@/lib/types";
 import { useToast } from "@/components/Toast";
 
@@ -27,7 +28,9 @@ export default function LoginPage() {
       });
       setToken(out.access_token);
       toast.push("Logged in");
-      router.replace(next);
+      // Doctors and assistants have their own interface; `next` may point into the CRM.
+      const me = await fetchMe(true).catch(() => null);
+      router.replace((me && CARE_HOME[me.role]) || next);
     } catch (err: any) {
       toast.push(err?.message || "Login failed", "error");
     } finally {

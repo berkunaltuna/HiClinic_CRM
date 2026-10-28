@@ -146,6 +146,16 @@ class Settings:
         "a doctor from the Health Clinic Türkiye medical team",
     )
 
+    # Proforma invoices (patient documents) share the private photo storage.
+    proforma_allowed_formats: list[str] = [
+        f.strip().lower()
+        for f in os.getenv("PROFORMA_ALLOWED_FORMATS", "pdf").split(",")
+        if f.strip()
+    ]
+    proforma_max_file_size_mb: int = int(os.getenv("PROFORMA_MAX_FILE_SIZE_MB", "10"))
+    # Lifetime of the one-document link a patient gets to open their proforma.
+    portal_document_link_seconds: int = int(os.getenv("PORTAL_DOCUMENT_LINK_SECONDS", "120"))
+
     # Phase 4B: optional keyword-to-tag mapping for inbound messages.
     # Example: {"implant": "implant_interest", "hair": "hair_transplant"}
     _keyword_tags_raw: str = os.getenv("KEYWORD_TAGS_JSON", "{}")

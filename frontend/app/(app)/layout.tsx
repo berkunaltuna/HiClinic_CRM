@@ -2,10 +2,24 @@
 
 import { Sidebar } from "@/components/Sidebar";
 import { useRequireAuth } from "@/lib/useRequireAuth";
+import { CARE_HOME, fetchMe } from "@/lib/useMe";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { isReady } = useRequireAuth();
+  const router = useRouter();
+  // The CRM is not for doctors/assistants (the API refuses them too): send them to their own area.
+  const [roleOk, setRoleOk] = useState(false);
+  useEffect(() => {
+    if (!isReady) return;
+    fetchMe()
+      .then((me) => {
+        if (CARE_HOME[me.role]) router.replace(CARE_HOME[me.role]);
+        else setRoleOk(true);
+      })
+      .catch(() => router.replace("/login"));
+  }, [isReady, router]);
 
   const storageKey = "hiclinic.sidebarCollapsed";
   const [collapsed, setCollapsed] = useState(false);
@@ -36,7 +50,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     []
   );
 
-  if (!isReady) {
+  if (!isReady || !roleOk) {
     return (
       <div style={{ padding: 24 }}>
         <div className="card" style={{ padding: 16, maxWidth: 520 }}>

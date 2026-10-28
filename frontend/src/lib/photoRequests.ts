@@ -29,8 +29,20 @@ export type PhotoRequestOut = {
   closed_at: string | null;
   created_by_email: string | null;
   photo_count: number;
+  email_status: string | null;
+  emailed_at: string | null;
+  emailed_by_email: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type PhotoEmailOut = {
+  id: UUID;
+  to_email: string;
+  status: string | null;
+  last_error: string | null;
+  sent_by_email: string | null;
+  created_at: string;
 };
 
 export type PhotoRequestQueueItem = PhotoRequestOut & { customer_name: string };
@@ -47,7 +59,47 @@ export type PhotoAccessLinkOut = {
   active: boolean;
 };
 
-export type IssuedLinkOut = { request: PhotoRequestOut; link: PhotoAccessLinkOut; portal_url: string };
+export type IssuedLinkOut = {
+  request: PhotoRequestOut;
+  link: PhotoAccessLinkOut | null;
+  portal_url: string | null;
+  email: PhotoEmailOut | null;
+  duplicate: boolean;
+  pipeline: { changed: boolean; stage: string; from?: string; reason?: string } | null;
+};
+
+/** 409 body when a patient has several open enquiries and none was chosen. */
+export type DealSelection = { code: "deal_selection_required"; message: string; deals: { id: UUID; label: string }[] };
+
+export function dealSelectionFrom(err: any): DealSelection | null {
+  if (err?.status !== 409) return null;
+  try {
+    const detail = JSON.parse(err.bodyText || "").detail;
+    return detail?.code === "deal_selection_required" ? detail : null;
+  } catch {
+    return null;
+  }
+}
+
+export function errorDetail(err: any, fallback: string): string {
+  try {
+    const detail = JSON.parse(err?.bodyText || "").detail;
+    if (typeof detail === "string") return detail;
+    if (detail?.message) return detail.message;
+  } catch {
+    // not JSON
+  }
+  return err?.message || fallback;
+}
+
+export const EMAIL_STATUS_LABELS: Record<string, string> = {
+  queued: "Email queued",
+  sending: "Email sending",
+  sent: "Email sent",
+  failed: "Email failed",
+  held: "Email held",
+  cancelled: "Email cancelled",
+};
 
 export type PatientPhotoOut = {
   id: UUID;
@@ -93,6 +145,8 @@ export type PhotoRequestDetailOut = {
   assessments: EntryOut[] | null;
   links: PhotoAccessLinkOut[];
   history: StatusEventOut[];
+  emails: PhotoEmailOut[];
+  assigned_doctor: { id: UUID; email: string; display_name: string | null } | null;
 };
 
 export type LinkOption = { id: UUID; label: string };
@@ -146,6 +200,8 @@ export type PortalRequestOut = {
   photos: PortalPhotoOut[];
   submitted_at: string | null;
   created_at: string;
+  proforma: { available: boolean; filename: string | null; uploaded_at: string | null };
+  doctor: { display_name: string; title: string | null; specialty: string | null; bio: string | null } | null;
 };
 
 /** The portal never touches the staff token; it uses its own short-lived session token. */
@@ -183,17 +239,90 @@ export function mimeFor(file: File): string {
   return EXT_MIME[ext] || "application/octet-stream";
 }
 
-/** Upload one file as a raw body with progress (the API streams it straight to private storage). */
+/** Upload one photo as a raw body with progress (the API streams it straight to private storage). */
 export function portalUpload(
   file: File,
   session: string,
   onProgress: (fraction: number) => void,
 ): { promise: Promise<PortalPhotoOut>; abort: () => void } {
+  return xhrUpload<PortalPhotoOut>(
+    `${API_URL}/portal/photo-request/photos?filename=${encodeURIComponent(file.name)}`,
+    file,
+    session,
+    mimeFor(file),
+    onProgress,
+  );
+}
+
+// --- Care team (doctor / assistant / admin) ----------------------------------------
+
+export type PersonOut = { id: UUID; email: string; display_name: string | null };
+
+export type CarePatientOut = {
+  id: UUID;
+  name: string;
+  treatment_interest: string | null;
+  doctor: PersonOut | null;
+  open_requests: number;
+  latest_request: {
+    id: UUID;
+    title: string;
+    status: PhotoRequestStatus;
+    photo_count: number;
+    photos_uploaded: boolean;
+    submitted_at: string | null;
+    email_status: string | null;
+    updated_at: string;
+  } | null;
+  proforma: { available: boolean; uploaded_at: string | null } | null;
+};
+
+export type CarePatientDetailOut = CarePatientOut & { requests: PhotoRequestOut[] };
+
+export type DocumentOut = {
+  id: UUID;
+  category: string;
+  original_filename: string | null;
+  content_type: string;
+  size_bytes: number;
+  uploaded_at: string;
+  uploaded_by_email: string | null;
+  superseded_at: string | null;
+};
+
+export type ProformaOut = { current: DocumentOut | null; history: DocumentOut[]; max_file_size_bytes: number; allowed_extensions: string[] };
+
+export type DoctorProfileOut = {
+  user_id: UUID;
+  display_name: string | null;
+  title: string | null;
+  specialty: string | null;
+  bio: string | null;
+  visible_to_patients: boolean;
+  updated_at: string | null;
+};
+
+/** Fetch an authenticated staff file (photo or document) as an object URL. */
+export async function fetchStaffFileUrl(path: string): Promise<string> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {}, cache: "no-store" });
+  if (!res.ok) throw new ApiError(`HTTP ${res.status}`, res.status, await res.text().catch(() => ""));
+  return URL.createObjectURL(await res.blob());
+}
+
+/** Raw-body PUT with upload progress (the API streams it straight to private storage). */
+export function xhrUpload<T>(
+  url: string,
+  file: File,
+  bearer: string,
+  contentType: string,
+  onProgress: (fraction: number) => void,
+): { promise: Promise<T>; abort: () => void } {
   const xhr = new XMLHttpRequest();
-  const promise = new Promise<PortalPhotoOut>((resolve, reject) => {
-    xhr.open("PUT", `${API_URL}/portal/photo-request/photos?filename=${encodeURIComponent(file.name)}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${session}`);
-    xhr.setRequestHeader("Content-Type", mimeFor(file));
+  const promise = new Promise<T>((resolve, reject) => {
+    xhr.open("PUT", url);
+    xhr.setRequestHeader("Authorization", `Bearer ${bearer}`);
+    xhr.setRequestHeader("Content-Type", contentType);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(e.loaded / e.total);
     };

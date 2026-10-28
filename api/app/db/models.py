@@ -15,7 +15,11 @@ class UserRole(str, Enum):
     viewer = "viewer"
     user = "user"
     # Clinical reviewer: the only role that may write clinical photo assessments.
+    # Doctors only reach the doctor interface and their assigned patients.
     doctor = "doctor"
+    # Works for one or more doctors: sees those doctors' patients' request status and
+    # manages proforma invoices. No clinical content, no CRM pages.
+    doctor_assistant = "doctor_assistant"
 
 class User(Base):
     __tablename__ = "users"
@@ -870,6 +874,26 @@ class PhotoRequest(Base):
     )
 
 
+class PhotoRequestEmail(Base):
+    """One email of a portal link through the outbox. Unique per link, so a retried send
+    can never queue a second email for the same link."""
+
+    __tablename__ = "photo_request_emails"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    request_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("photo_requests.id", ondelete="CASCADE"), nullable=False)
+    link_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("photo_access_links.id", ondelete="CASCADE"), nullable=False, unique=True)
+    outbound_message_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("outbound_messages.id", ondelete="SET NULL"), nullable=True)
+    to_email = sa.Column(sa.String(320), nullable=False)
+    sent_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+    outbound_message = relationship("OutboundMessage")
+    sent_by = relationship("User")
+
+    __table_args__ = (sa.Index("ix_photo_request_emails_request", "request_id", "created_at"),)
+
+
 class PhotoAccessLink(Base):
     """A patient portal link for one photo request. Only the token's SHA-256 is stored."""
 
@@ -989,3 +1013,100 @@ class PhotoRequestStatusEvent(Base):
     created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
 
     __table_args__ = (sa.Index("ix_photo_request_status_events_request", "request_id", "created_at"),)
+
+
+# --- Care team: doctor/assistant assignments, doctor profiles, patient documents ----
+
+
+class DoctorPatientAssignment(Base):
+    """Explicit doctor-to-patient assignment (never inferred). At most one active doctor
+    per patient; reassigning ends the old row so history is kept."""
+
+    __tablename__ = "doctor_patient_assignments"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    doctor_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    customer_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("customers.id", ondelete="CASCADE"), nullable=False)
+    assigned_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    ended_at = sa.Column(sa.DateTime(timezone=True))
+    ended_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    doctor = relationship("User", foreign_keys=[doctor_user_id])
+
+    __table_args__ = (
+        sa.Index(
+            "uq_doctor_patient_active",
+            "customer_id",
+            unique=True,
+            postgresql_where=sa.text("ended_at IS NULL"),
+        ),
+        sa.Index("ix_doctor_patient_doctor", "doctor_user_id", "ended_at"),
+    )
+
+
+class AssistantDoctorAssignment(Base):
+    """An assistant works for a doctor (admin-managed)."""
+
+    __tablename__ = "assistant_doctor_assignments"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    assistant_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    doctor_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    assigned_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    ended_at = sa.Column(sa.DateTime(timezone=True))
+    ended_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    __table_args__ = (
+        sa.Index(
+            "uq_assistant_doctor_active",
+            "assistant_user_id",
+            "doctor_user_id",
+            unique=True,
+            postgresql_where=sa.text("ended_at IS NULL"),
+        ),
+    )
+
+
+class DoctorProfile(Base):
+    """What patients see about their doctor. Admin-managed; every field is optional and
+    nothing is shown unless filled in and marked visible."""
+
+    __tablename__ = "doctor_profiles"
+
+    user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    display_name = sa.Column(sa.String(200))
+    title = sa.Column(sa.String(200))
+    specialty = sa.Column(sa.String(200))
+    bio = sa.Column(sa.Text())
+    visible_to_patients = sa.Column(sa.Boolean(), nullable=False, server_default=sa.false())
+    updated_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+
+
+class PatientDocument(Base):
+    """A private patient document (currently: proforma invoices). Bytes in private
+    storage; replacing a document supersedes it instead of deleting it."""
+
+    __tablename__ = "patient_documents"
+
+    id = sa.Column(sa.UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, nullable=False)
+    customer_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False)
+    category = sa.Column(sa.String(30), nullable=False)  # proforma
+    storage_key = sa.Column(sa.String(200), nullable=False, unique=True)
+    original_filename = sa.Column(sa.String(255))
+    content_type = sa.Column(sa.String(50), nullable=False)
+    size_bytes = sa.Column(sa.BigInteger(), nullable=False)
+    sha256 = sa.Column(sa.String(64), nullable=False)
+    uploaded_by_user_id = sa.Column(sa.UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    uploaded_at = sa.Column(sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False)
+    superseded_at = sa.Column(sa.DateTime(timezone=True))
+    superseded_by_id = sa.Column(sa.UUID(as_uuid=True), nullable=True)
+
+    uploaded_by = relationship("User")
+
+    __table_args__ = (
+        sa.CheckConstraint("category IN ('proforma')", name="ck_patient_documents_category"),
+        sa.Index("ix_patient_documents_customer", "customer_id", "category", "superseded_at"),
+    )

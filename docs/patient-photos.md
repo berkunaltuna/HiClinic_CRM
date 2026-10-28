@@ -19,39 +19,101 @@ Allowed transitions: `uploaded/reviewed → in_review`; `uploaded/in_review/revi
 `uploaded/in_review → reviewed`; any non-final → `closed`; `requested/uploaded/in_review/more_photos_needed → withdrawn`.
 `more_photos_needed → uploaded` happens when the patient sends the new round.
 
-Where staff find it: **Contacts → contact → Photo requests** card, and **Photo reviews** in the sidebar (review queue).
+Where to find it: CRM staff use the **Photo requests** and **Care team** cards on a contact and **Photo reviews** in the sidebar. Doctors use `/doctor` (Patients, Photos), assistants use `/assistant`, and admins use **Care team** in the sidebar.
 
 ## Roles
 
 Enforced in `api/app/services/photo_permissions.py` on every request; the UI only mirrors it.
-A new `doctor` role was added (Users page → role dropdown).
 
-| Action | admin | manager | coordinator | doctor | user | viewer |
-| --- | :-: | :-: | :-: | :-: | :-: | :-: |
-| See request list, status, history | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Create request, issue/revoke links | ✓ | ✓ | ✓ | ✓ | | |
-| View / download photos | ✓ | ✓ | ✓ | ✓ | | |
-| Read & write internal notes | ✓ | ✓ | ✓ | ✓ | | |
-| Read clinical assessments | ✓ | ✓ | ✓ | ✓ | | |
-| **Write clinical assessments** | | | | ✓ | | |
-| **Request more photos / mark reviewed** | | | | ✓ | | |
-| Start review, close, withdraw | ✓ | ✓ | ✓ | ✓ | | |
-| Hide a photo (soft delete) | ✓ | ✓ | | | | |
+| Action | admin | manager | coordinator | doctor | doctor_assistant | user | viewer |
+| --- | :-: | :-: | :-: | :-: | :-: | :-: | :-: |
+| See request list, status, history, upload status | ✓ all | ✓ | ✓ | assigned | their doctors' patients | ✓ | ✓ |
+| Create request, email/copy link, revoke links | ✓ | ✓ | ✓ | assigned | | | |
+| View / download photos | ✓ | ✓ | ✓ | assigned | | | |
+| Read & write internal notes | ✓ | ✓ | ✓ | assigned | | | |
+| Read clinical assessments | ✓ | ✓ | ✓ | assigned | | | |
+| **Write assessments, mark reviewed, request more photos** | | | | assigned | | | |
+| Start review, close, withdraw | ✓ | ✓ | ✓ | assigned | | | |
+| Hide a photo (soft delete) | ✓ | ✓ | | | | | |
+| View / upload / replace proforma | ✓ | ✓ | ✓ | | their doctors' patients | | |
+| Assign doctors and assistants, edit doctor profiles | ✓ | | | | | | |
+| General CRM (contacts, deals, events, inbox, settings…) | ✓ | ✓ | ✓ | **no** | **no** | ✓ | ✓ |
 
-- `user` is the role every new account starts with, so it gets no access to photos, notes or
-  assessments. Give assistants the `coordinator` role on the Users page.
-- Notes and assessments can only be edited by their author; every version is kept
+- **Which patients:** admins see every patient. Doctors see only patients assigned to them
+  (`doctor_patient_assignments`, one active doctor per patient). Assistants see only patients
+  whose doctor they are assigned to (`assistant_doctor_assignments`). Other CRM roles follow
+  `SHARE_CUSTOMERS_ACROSS_USERS`. Assignments are explicit rows set by an admin, never
+  guessed from names or emails, and ending one keeps its history.
+- **Doctors and assistants never reach the CRM:** every existing CRM route uses
+  `get_current_user`, which refuses these two roles (403). Only `/auth/me`, `/care/*`,
+  `/photo-requests/*`, `/customers/{id}/photo-requests*` and `/customers/{id}/proforma*` use
+  `get_authenticated_user`, and those check role and assignment themselves. A test walks every
+  authenticated GET route and checks that both roles get 403.
+- Doctors land on `/doctor/patients` (sections: Patients, Photos), assistants on `/assistant`.
+  The CRM layout redirects them away, and the CRM sidebar hides admin-only pages from non-admins.
+- `user` is the role every new account starts with, so it gets no clinical access. Give
+  assistants who work in the CRM the `coordinator` role, and assistants who work for a doctor
+  the `doctor_assistant` role.
+- Notes and assessments can only be edited by their author. Every version is kept
   (`photo_entry_revisions`) and shown as edit history.
-- Patient access follows the existing `SHARE_CUSTOMERS_ACROSS_USERS` rule. Doctors can
-  review every patient's requests even when sharing is off.
-- Admins are deliberately **not** allowed to write clinical assessments.
+
+## Emailing the upload link
+
+"Email link to patient" (contact page, doctor interface, or "Email the secure upload link" when
+creating a request) queues an email through the existing outbox (`outbound_messages`, sent by
+the worker) using the `photo_request_link` template. Migration 0025 seeds this template, and it
+can be edited on the Templates page; sending refuses if it no longer contains `{{portal_link}}`.
+
+- The email contains only the personal link and its expiry date: no photos, attachments or
+  clinical details.
+- **No duplicates:** each link has at most one email (`photo_request_emails.link_id` is
+  unique), and the request row is locked while sending. If the current link's email is queued,
+  sending or sent, a repeated send returns it with `duplicate: true` and queues nothing.
+  "Resend" deliberately sends a new link and revokes the old one.
+- **Failures change nothing:** if the patient has no valid email, has opted out
+  (`can_contact = false`), or the message cannot be queued, the API returns a clear error
+  (422/503). No link, email record or pipeline change is kept, and the attempt is audited as
+  `photo_request.email_not_sent`. The CRM shows the outbox status (queued / sent / failed),
+  so a later worker failure is visible and the link can be resent.
+- **The link is not kept in CRM data:** it only lives in the queued message's variables. The
+  outbox API shows it as `[hidden]`. The worker sends the real link, writes a redacted copy to
+  the contact thread, and wipes the link from the queue row once the message is sent or fails
+  (`worker/app/redaction.py`).
+
+### Pipeline
+
+The CRM pipeline stage lives on the patient (`customers.stage`; deals have no stage). When a link
+email is queued, the patient's card moves to the new **Photos Requested** stage (between
+Interested and Appointment Booked), **forward only**. A patient at or past that stage, `lost`,
+or an unknown stage is left alone. Stages are plain strings, so no migration was needed; the
+frontend stage list gained `photos_requested`. The request is also linked to the enquiry
+(deal) it is about. If the patient has several open enquiries and none was chosen, sending is
+refused with `deal_selection_required` and staff pick one; deal records themselves are never
+changed. A patient uploading photos never changes the pipeline.
+
+## Proforma invoices
+
+Admins, managers, coordinators and assistants (for their doctors' patients) can upload or
+replace a patient's proforma on the contact page or in the assistant interface. It's a PDF,
+validated by extension, MIME type and `%PDF-` signature, up to `PROFORMA_MAX_FILE_SIZE_MB`. It is
+streamed into the same private storage as photos and stored as `patient_documents`
+(category `proforma`). Replacing one supersedes the old file instead of deleting it. Every
+upload, replacement, view and download is audited.
+
+The patient portal shows only the request instructions and upload controls, their current
+proforma (if any), and their assigned doctor's profile, but only if an admin filled it in and
+ticked "show to patients". Otherwise it shows clear empty states. Patients open the proforma
+through `POST /portal/photo-request/proforma/link`, which returns a link to that one document
+valid for `PORTAL_DOCUMENT_LINK_SECONDS` (default 120 s). The link is signed with the portal
+key and its own audience, and stops working if the portal link is revoked or the document is
+replaced.
 
 ## Doctors and staff logins
 
-Doctors are ordinary CRM accounts (`users` table) that sign in at `/login` like other staff.
-An admin sets their role to `doctor` on the Users page. The role is read from the database
-on every request (it is not stored in the JWT), so changing it takes effect immediately.
-Apart from the photo module, a doctor sees the CRM like any other staff role.
+Doctors and assistants are ordinary staff accounts (`users` table). An admin creates them on
+the Users page with the `doctor` or `doctor_assistant` role, and they sign in at `/login`.
+They are then sent to their own interface. Roles are read from the database on every
+request, not stored in the JWT, so a role change takes effect immediately.
 
 ## Future patient accounts (not built yet)
 
@@ -141,6 +203,9 @@ There was no patient authentication, so the portal uses per-request links:
 | `PHOTO_CONSENT_VERSION` | `2026-10-v1` | Change when the consent wording changes |
 | `PHOTO_REVIEWER_DESCRIPTION` | "a doctor from the Health Clinic Türkiye medical team" | Shown to patients |
 | `FRONTEND_BASE_URL` | `http://localhost:3000` | Used to build portal links; **set to the public frontend URL** |
+| `PROFORMA_ALLOWED_FORMATS` | `pdf` | Proforma file types |
+| `PROFORMA_MAX_FILE_SIZE_MB` | `10` | Per proforma |
+| `PORTAL_DOCUMENT_LINK_SECONDS` | `120` | Lifetime of a patient's proforma link |
 
 ### Deployment checklist
 
@@ -152,11 +217,21 @@ There was no patient authentication, so the portal uses per-request links:
    `PHOTO_MAX_FILE_SIZE_MB` + 1m, and preferably `proxy_request_buffering off;` for
    `/portal/photo-request/photos` so the body streams through. Make sure `/data` or the volume
    path is never exposed as a static location.
-5. Give clinicians the `doctor` role on the Users page.
+5. Give clinicians the `doctor` role and their assistants `doctor_assistant` on the Users page,
+   then link assistants to doctors and fill in doctor profiles on **Care team**, and assign
+   patients to doctors on each contact page.
+6. Rebuild and restart the **worker** too (`docker compose up -d --build worker`): it gained
+   the link redaction. Email sending needs the existing SMTP settings.
 
 ## Audit
 
-Everything is written to `audit_logs` with `entity_type="photo_request"` and the request id:
+Care team and documents: `care_team.doctor_assigned/unassigned` (customer),
+`care_team.assistant_doctors_set` and `care_team.doctor_profile_updated` (user),
+`patient_document.uploaded/replaced/viewed/downloaded/link_issued_to_patient/viewed_by_patient`
+(document), `pipeline.stage_changed` with `source: photo_request_email` (customer).
+
+Photo requests are written to `audit_logs` with `entity_type="photo_request"` and the request id
+(including `photo_request.email_queued` and `.email_not_sent`):
 `photo_request.created`, `.link_issued`, `.link_revoked`, `.status_changed` (staff and patient),
 `.consent_recorded`, `.note_created/updated`, `.assessment_created/updated`,
 `photo_portal.session_opened`, `photo_portal.access_denied`, `patient_photo.uploaded`,
@@ -171,4 +246,4 @@ to the surviving contact.
 
 ## Tests
 
-`api/tests/test_patient_photos.py` (run with the rest of the suite, see `api/tests/README.md`).
+`api/tests/test_patient_photos.py` and `api/tests/test_care_team.py` (run with the rest of the suite, see `api/tests/README.md`).

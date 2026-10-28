@@ -645,7 +645,10 @@ input:focus, select:focus, textarea:focus {
 
 /* Patient photo portal (public, no CRM chrome). */
 .portalShell { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 16px; }
+/* Grid children default to min-width:auto, which lets the file input push cards past a phone screen. */
+.portalShell > *, .portalShell .cardBody > * { min-width: 0; }
 .portalDrop { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px 16px; text-align: center; background: var(--surface); }
+.portalDrop input[type="file"] { width: 100%; max-width: 100%; }
 .portalDrop:focus-within, .portalDropActive { border-color: var(--primary); background: rgba(30, 103, 150, 0.04); }
 .portalGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
 .portalTile { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); display: grid; }
@@ -654,3 +657,11 @@ input:focus, select:focus, textarea:focus {
 .progress { height: 6px; border-radius: 999px; background: var(--border); overflow: hidden; }
 .progress > div { height: 100%; background: var(--primary); transition: width .15s linear; }
 button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid rgba(30, 103, 150, 0.45); outline-offset: 2px; }
+
+/* Doctor / assistant interfaces (no CRM sidebar). */
+.careShell { min-height: 100vh; background: var(--bg); }
+.careHeader { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
+.careNav { display: flex; gap: 8px; }
+.careMain { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+.careMain > * { min-width: 0; }
+.tableWrap { overflow-x: auto; }

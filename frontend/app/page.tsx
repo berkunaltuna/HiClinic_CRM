@@ -3,13 +3,19 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getToken } from "@/lib/api";
+import { fetchMe, homeFor } from "@/lib/useMe";
 
 export default function IndexPage() {
   const router = useRouter();
 
   useEffect(() => {
-    const token = getToken();
-    router.replace(token ? "/dashboard" : "/login");
+    if (!getToken()) {
+      router.replace("/login");
+      return;
+    }
+    fetchMe()
+      .then((me) => router.replace(homeFor(me.role)))
+      .catch(() => router.replace("/login"));
   }, [router]);
 
   return (

@@ -485,7 +485,10 @@ def test_role_permissions_for_notes_assessments_and_status(client, db, monkeypat
     issued, ph, ids = submitted_request(client, db, coord, cid, files=(JPEG, PNG))
     rid = issued["request"]["id"]
 
-    # The doctor reviews across owners even with owner isolation on.
+    # A doctor sees the patient only once an admin assigns them (not via ownership).
+    assert client.get(f"/photo-requests/{rid}", headers=doctor).status_code == 404
+    doctor_id = client.get("/auth/me", headers=doctor).json()["id"]
+    assert client.put(f"/care/patients/{cid}/doctor", json={"doctor_user_id": doctor_id}, headers=admin).status_code == 200
     assert client.get(f"/photo-requests/{rid}", headers=doctor).status_code == 200
     queue = client.get("/photo-requests", params={"status": "uploaded"}, headers=doctor).json()
     assert rid in [q["id"] for q in queue]

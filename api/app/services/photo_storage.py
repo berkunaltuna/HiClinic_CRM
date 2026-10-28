@@ -1,4 +1,4 @@
-"""Private storage for patient photos.
+"""Private storage for patient photos and documents (proforma invoices).
 
 Uploads are written chunk by chunk to a temp file and atomically moved into place,
 so a large photo never sits in application memory. Files are only ever read back
@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator, Protocol
 
+from fastapi import HTTPException, Request
+from starlette.concurrency import run_in_threadpool
+
 from app.core.config import settings
 
 READ_CHUNK_BYTES = 64 * 1024
@@ -26,6 +29,7 @@ FORMATS: dict[str, dict] = {
     "png": {"ext": "png", "content_type": "image/png", "extensions": {"png"}, "mimes": {"image/png"}},
     "webp": {"ext": "webp", "content_type": "image/webp", "extensions": {"webp"}, "mimes": {"image/webp"}},
     "heic": {"ext": "heic", "content_type": "image/heic", "extensions": {"heic", "heif"}, "mimes": {"image/heic", "image/heif", "image/heic-sequence", "image/heif-sequence"}},
+    "pdf": {"ext": "pdf", "content_type": "application/pdf", "extensions": {"pdf"}, "mimes": {"application/pdf"}},
 }
 
 _HEIF_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"mif1", b"msf1"}
@@ -44,6 +48,8 @@ def detect_format(head: bytes) -> str | None:
         return "webp"
     if head[4:8] == b"ftyp" and head[8:12] in _HEIF_BRANDS:
         return "heic"
+    if head[:5] == b"%PDF-":
+        return "pdf"
     return None
 
 
@@ -51,11 +57,11 @@ def extension_of(filename: str) -> str:
     return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
 
-def format_for_upload(filename: str, declared_mime: str) -> str | None:
+def format_for_upload(filename: str, declared_mime: str, allowed: list[str] | None = None) -> str | None:
     """The allowed format matching both the filename extension and the declared MIME type."""
     ext = extension_of(filename)
     mime = (declared_mime or "").split(";", 1)[0].strip().lower()
-    for name in settings.photo_allowed_formats:
+    for name in settings.photo_allowed_formats if allowed is None else allowed:
         spec = FORMATS.get(name)
         if spec and ext in spec["extensions"] and mime in spec["mimes"]:
             return name
@@ -90,7 +96,7 @@ class PhotoStorage(Protocol):
     def delete(self, key: str) -> None: ...
 
 
-_KEY_RE = re.compile(r"^[0-9a-f]{2}/[0-9a-f]{32}\.(jpg|png|webp|heic)$")
+_KEY_RE = re.compile(r"^[0-9a-f]{2}/[0-9a-f]{32}\.(jpg|png|webp|heic|pdf)$")
 
 
 @dataclass
@@ -187,3 +193,52 @@ def set_photo_storage(storage: PhotoStorage | None) -> None:
     """Swap the backend (tests)."""
     global _storage
     _storage = storage
+
+
+# --- Streaming uploads (shared by photos and documents) -------------------------------
+
+
+async def stream_upload_to_writer(request: Request, *, fmt: str, max_bytes: int, too_big_detail: str) -> PhotoWriter:
+    """Stream the raw request body into a private temp file, chunk by chunk.
+
+    Never buffers the whole body: each chunk (about 64 KB from the ASGI server) is written
+    straight to disk. Checks Content-Length up front, the running size while streaming, and
+    that the leading bytes really are `fmt`. On any failure the temp file is removed and an
+    HTTPException is raised; on success the caller commits or aborts the returned writer.
+    """
+    declared = request.headers.get("content-length")
+    if declared is None:
+        raise HTTPException(status_code=411, detail="Content-Length is required")
+    try:
+        declared_len = int(declared)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid Content-Length")
+    if declared_len > max_bytes:
+        raise HTTPException(status_code=413, detail=too_big_detail)
+    if declared_len < SNIFF_BYTES:
+        raise HTTPException(status_code=415, detail="This file is not a valid file of the expected type")
+
+    from starlette.requests import ClientDisconnect
+
+    writer = await run_in_threadpool(get_photo_storage().open_writer)
+    head = b""
+    try:
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+            if writer.bytes_written + len(chunk) > max_bytes:
+                raise HTTPException(status_code=413, detail=too_big_detail)
+            if len(head) < SNIFF_BYTES:
+                head += chunk[: SNIFF_BYTES - len(head)]
+                if len(head) >= SNIFF_BYTES and detect_format(head) != fmt:
+                    raise HTTPException(status_code=415, detail="The file contents do not match its type.")
+            await run_in_threadpool(writer.write, chunk)
+        if len(head) < SNIFF_BYTES or writer.bytes_written != declared_len:
+            raise HTTPException(status_code=400, detail="The upload was incomplete. Please try again.")
+    except ClientDisconnect:
+        await run_in_threadpool(writer.abort)
+        raise HTTPException(status_code=400, detail="The upload was interrupted")
+    except BaseException:
+        await run_in_threadpool(writer.abort)
+        raise
+    return writer

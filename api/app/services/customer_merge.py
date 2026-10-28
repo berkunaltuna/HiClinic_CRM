@@ -17,6 +17,8 @@ from app.db.models import (
     Interaction,
     OutboundMessage,
     OutcomeEvent,
+    DoctorPatientAssignment,
+    PatientDocument,
     PhotoRequest,
     User,
 )
@@ -230,6 +232,23 @@ def merge_customers(
     db.query(PhotoRequest).filter(PhotoRequest.customer_id == loser.id).update(
         {PhotoRequest.customer_id: survivor.id}, synchronize_session=False
     )
+    db.query(PatientDocument).filter(PatientDocument.customer_id == loser.id).update(
+        {PatientDocument.customer_id: survivor.id}, synchronize_session=False
+    )
+    # The survivor keeps its own doctor; it takes the loser's only if it has none.
+    survivor_has_doctor = (
+        db.query(DoctorPatientAssignment.id)
+        .filter(DoctorPatientAssignment.customer_id == survivor.id, DoctorPatientAssignment.ended_at.is_(None))
+        .first()
+        is not None
+    )
+    for a in db.query(DoctorPatientAssignment).filter(DoctorPatientAssignment.customer_id == loser.id):
+        if a.ended_at is None and survivor_has_doctor:
+            a.ended_at = sa.func.now()
+        a.customer_id = survivor.id
+        if a.ended_at is None:
+            survivor_has_doctor = True
+    db.flush()
 
     # Consolidate unambiguous active duplicates (same event, same exact slot, same status/notes/
     # staff on both sides) so the merge never leaves the customer double-booked -- occupying the

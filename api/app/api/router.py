@@ -28,6 +28,8 @@ from app.api import (
     automations,
     photo_requests,
     patient_portal,
+    patient_documents,
+    care_team,
 )
 
 api_router = APIRouter()
@@ -67,3 +69,5 @@ api_router.include_router(automations.router)
 # Patient photo requests: staff module + patient portal
 api_router.include_router(photo_requests.router)
 api_router.include_router(patient_portal.router)
+api_router.include_router(patient_documents.router)
+api_router.include_router(care_team.router)

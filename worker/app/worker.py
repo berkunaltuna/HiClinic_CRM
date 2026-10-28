@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import time
@@ -13,6 +14,7 @@ from email.message import EmailMessage
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
+from app.redaction import redact_variables
 from app.send_guard import check_automated_send
 from app.twilio_whatsapp import TwilioConfigError, send_whatsapp_template, send_whatsapp_text
 
@@ -305,6 +307,7 @@ def process_once(engine: Engine) -> int:
                 subject = _render_text(str(tpl.get("subject") or ""), {**base_ctx, **variables}).strip()
                 body_src = str(tpl.get("body") or "")
                 rendered = _render_text(body_src, {**base_ctx, **variables}).strip()
+                redacted_vars = redact_variables(variables)
                 if not subject:
                     raise RuntimeError("Rendered subject is empty")
                 if not rendered:
@@ -314,7 +317,10 @@ def process_once(engine: Engine) -> int:
 
                 provider_sid = _send_email(to_email=to_email, subject=subject, body_html=body_html)
                 interaction_subject = subject
-                interaction_content = rendered
+                # Secret variables (a patient's private upload link) never reach the contact thread.
+                interaction_content = (
+                    _render_text(body_src, {**base_ctx, **redacted_vars}).strip() if redacted_vars is not variables else rendered
+                )
 
             else:
                 raise RuntimeError(f"Unsupported channel: {channel}")
@@ -355,6 +361,12 @@ def process_once(engine: Engine) -> int:
                     ),
                     {"id": msg_id, "sid": provider_sid},
                 )
+                # Once sent, secret variables are no longer needed: wipe them from the queue row.
+                if row["variables"] and redact_variables(row["variables"]) is not row["variables"]:
+                    conn.execute(
+                        text("UPDATE outbound_messages SET variables = CAST(:v AS json) WHERE id = :id"),
+                        {"id": msg_id, "v": json.dumps(redact_variables(row["variables"]))},
+                    )
 
         except TwilioConfigError as e:
             # configuration issue: fail and stop fast (no point retrying)
@@ -382,6 +394,12 @@ def process_once(engine: Engine) -> int:
                     ),
                     {"id": msg_id, "err": str(e)},
                 )
+                # A failed message is never retried with the same secret (staff send a new link).
+                if row["variables"] and redact_variables(row["variables"]) is not row["variables"]:
+                    conn.execute(
+                        text("UPDATE outbound_messages SET variables = CAST(:v AS json) WHERE id = :id"),
+                        {"id": msg_id, "v": json.dumps(redact_variables(row["variables"]))},
+                    )
 
     return processed
 

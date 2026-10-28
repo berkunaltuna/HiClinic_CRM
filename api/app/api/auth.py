@@ -7,7 +7,7 @@ from app.auth.security import create_access_token, decode_token, hash_password, 
 from app.core.config import settings
 from app.db.session import get_db
 from app.schemas.auth import ForgotPasswordRequest, ForgotPasswordResponse, LoginRequest, RegisterRequest, ResetPasswordRequest, TokenResponse, MeOut
-from app.auth.deps import get_current_user
+from app.auth.deps import get_authenticated_user
 from app.db.models import User, UserRole
 from app.services.email_provider import get_email_provider
 import jwt
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.get("/me", response_model=MeOut)
-def me(user: User = Depends(get_current_user)) -> MeOut:
+def me(user: User = Depends(get_authenticated_user)) -> MeOut:
     role = getattr(user, "role", None) or "user"
     # role may be a UserRole enum; str() of it would give "UserRole.admin".
     return MeOut(id=str(user.id), email=user.email, role=getattr(role, "value", role))

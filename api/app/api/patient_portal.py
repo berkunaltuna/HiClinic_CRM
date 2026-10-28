@@ -14,11 +14,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
-from starlette.requests import ClientDisconnect
 
 from app.api.photo_requests import ENTITY, PHOTO_RESPONSE_HEADERS, _add_status_event, allowed_upload_types
 from app.core.config import settings
-from app.db.models import PatientPhoto, PhotoAccessLink, PhotoRequest
+from app.api.patient_documents import current_proforma, stream_document
+from app.db.models import DoctorProfile, PatientDocument, PatientPhoto, PhotoAccessLink, PhotoRequest
 from app.db.session import get_db
 from app.schemas.photo_request import (
     PortalConsentIn,
@@ -28,9 +28,15 @@ from app.schemas.photo_request import (
     PortalRequestOut,
     PortalSessionIn,
     PortalSessionOut,
+    PortalDoctorOut,
+    PortalDocumentLinkOut,
+    PortalProformaOut,
 )
 from app.services.audit import record_audit
+from app.services.photo_permissions import active_doctor_assignment
 from app.services.photo_portal_auth import (
+    create_document_token,
+    decode_document_token,
     UPLOADABLE_STATUSES,
     PortalContext,
     client_key,
@@ -44,12 +50,11 @@ from app.services.photo_portal_auth import (
 )
 from app.services.photo_storage import (
     FORMATS,
-    SNIFF_BYTES,
     PhotoWriter,
-    detect_format,
     format_for_upload,
     get_photo_storage,
     sanitize_filename,
+    stream_upload_to_writer,
 )
 
 router = APIRouter(prefix="/portal/photo-request", tags=["patient-portal"])
@@ -202,7 +207,73 @@ def get_portal_request(response: Response, ctx: PortalContext = Depends(get_port
         photos=[_portal_photo(p) for p in _current_photos(db, req)],
         submitted_at=req.submitted_at,
         created_at=req.created_at,
+        proforma=_portal_proforma(db, req),
+        doctor=_portal_doctor(db, req),
     )
+
+
+def _portal_proforma(db: Session, req: PhotoRequest) -> PortalProformaOut:
+    doc = current_proforma(db, req.customer_id)
+    if doc is None:
+        return PortalProformaOut(available=False)
+    return PortalProformaOut(available=True, filename=doc.original_filename, uploaded_at=doc.uploaded_at)
+
+
+def _portal_doctor(db: Session, req: PhotoRequest) -> PortalDoctorOut | None:
+    """The assigned doctor's patient-facing profile, only if an admin made it visible."""
+    assignment = active_doctor_assignment(db, req.customer_id)
+    if assignment is None:
+        return None
+    profile = db.get(DoctorProfile, assignment.doctor_user_id)
+    if profile is None or not profile.visible_to_patients or not (profile.display_name or "").strip():
+        return None
+    return PortalDoctorOut(display_name=profile.display_name, title=profile.title, specialty=profile.specialty, bio=profile.bio)
+
+
+@router.post("/proforma/link", response_model=PortalDocumentLinkOut)
+def proforma_link(ctx: PortalContext = Depends(get_portal_context), db: Session = Depends(get_db)) -> PortalDocumentLinkOut:
+    """A short-lived link to open this patient's own current proforma (no public file URL)."""
+    doc = current_proforma(db, ctx.request.customer_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="No proforma invoice is available yet")
+    token, expires_at = create_document_token(ctx.link, doc.id, ctx.request.customer_id)
+    _patient_audit(db, ctx, "patient_document.link_issued_to_patient", document_id=str(doc.id))
+    db.commit()
+    return PortalDocumentLinkOut(url=f"/portal/photo-request/proforma/content?token={token}", expires_at=expires_at)
+
+
+@router.get("/proforma/content")
+def proforma_content(token: str = Query(max_length=2000), db: Session = Depends(get_db)) -> StreamingResponse:
+    denied = HTTPException(status_code=401, detail="This document link has expired. Please open it again from your page.")
+    try:
+        claims = decode_document_token(token)
+        doc_id, customer_id, link_id = UUID(claims["sub"]), UUID(claims["cid"]), UUID(claims["lid"])
+    except Exception:
+        raise denied
+    link = db.get(PhotoAccessLink, link_id)
+    req = db.get(PhotoRequest, link.request_id) if link is not None else None
+    doc = db.get(PatientDocument, doc_id)
+    if (
+        link is None
+        or not link_is_usable(link)
+        or req is None
+        or req.status in TERMINAL_STATUSES
+        or req.customer_id != customer_id
+        or doc is None
+        or doc.customer_id != customer_id
+        or doc.superseded_at is not None
+    ):
+        raise denied
+    record_audit(
+        db,
+        actor=None,
+        action="patient_document.viewed_by_patient",
+        entity_type="patient_document",
+        entity_id=doc.id,
+        metadata={"actor_type": "patient", "link_id": str(link.id), "customer_id": str(customer_id)},
+    )
+    db.commit()
+    return stream_document(doc, "inline")
 
 
 @router.post("/consent", status_code=204, response_class=Response)
@@ -291,39 +362,14 @@ async def upload_photo(
     if fmt is None:
         raise HTTPException(status_code=415, detail="Unsupported file type. Please upload a JPEG, PNG, WebP or HEIC photo.")
 
-    max_bytes = _max_bytes()
-    declared = request.headers.get("content-length")
-    if declared is None:
-        raise HTTPException(status_code=411, detail="Content-Length is required")
+    writer = await stream_upload_to_writer(
+        request,
+        fmt=fmt,
+        max_bytes=_max_bytes(),
+        too_big_detail=f"Photos must be {settings.photo_max_file_size_mb} MB or smaller",
+    )
     try:
-        declared_len = int(declared)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid Content-Length")
-    if declared_len > max_bytes:
-        raise HTTPException(status_code=413, detail=f"Photos must be {settings.photo_max_file_size_mb} MB or smaller")
-    if declared_len < SNIFF_BYTES:
-        raise HTTPException(status_code=415, detail="This file is not a valid image")
-
-    storage = get_photo_storage()
-    writer = await run_in_threadpool(storage.open_writer)
-    head = b""
-    try:
-        async for chunk in request.stream():
-            if not chunk:
-                continue
-            if writer.bytes_written + len(chunk) > max_bytes:
-                raise HTTPException(status_code=413, detail=f"Photos must be {settings.photo_max_file_size_mb} MB or smaller")
-            if len(head) < SNIFF_BYTES:
-                head += chunk[: SNIFF_BYTES - len(head)]
-                if len(head) >= SNIFF_BYTES and detect_format(head) != fmt:
-                    raise HTTPException(status_code=415, detail="The file contents do not match its type. Please upload a real photo.")
-            await run_in_threadpool(writer.write, chunk)
-        if len(head) < SNIFF_BYTES or writer.bytes_written != declared_len:
-            raise HTTPException(status_code=400, detail="The upload was incomplete. Please try again.")
         photo = await run_in_threadpool(_finalize_upload, db, ctx, writer, fmt, filename)
-    except ClientDisconnect:
-        await run_in_threadpool(writer.abort)
-        raise HTTPException(status_code=400, detail="The upload was interrupted")
     except BaseException:
         await run_in_threadpool(writer.abort)
         raise

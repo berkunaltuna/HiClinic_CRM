@@ -6,6 +6,7 @@ access to the patient; the frontend only mirrors these rules.
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from uuid import UUID
 
@@ -14,12 +15,14 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.auth.deps import get_current_user
+from app.auth.deps import get_authenticated_user
 from app.core.config import settings
 from app.db.models import (
     Appointment,
     Customer,
     Deal,
+    DoctorProfile,
+    PhotoRequestEmail,
     PatientPhoto,
     PhotoAccessLink,
     PhotoClinicalAssessment,
@@ -34,7 +37,10 @@ from app.schemas.photo_request import (
     EntryIn,
     EntryOut,
     EntryRevisionOut,
+    AssignedDoctorOut,
     IssuedLinkOut,
+    PhotoEmailOut,
+    SendEmailIn,
     LinkOption,
     LinkRevokeIn,
     PatientPhotoOut,
@@ -55,7 +61,8 @@ from app.services.photo_permissions import (
     permissions_for,
     require_permission,
     role_of,
-    sees_all_customers,
+    active_doctor_assignment,
+    customer_scope,
 )
 from app.services.photo_portal_auth import (
     UPLOADABLE_STATUSES,
@@ -64,7 +71,10 @@ from app.services.photo_portal_auth import (
     link_is_usable,
     now_utc,
 )
+from app.services import photo_request_email as emailing
 from app.services.photo_storage import FORMATS, get_photo_storage
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["photo-requests"])
 
@@ -101,7 +111,7 @@ PHOTO_RESPONSE_HEADERS = {
 
 def _get_customer(db: Session, customer_id: UUID, user: User) -> Customer:
     customer = db.get(Customer, customer_id)
-    if customer is None or not can_access_customer(user, customer):
+    if customer is None or not can_access_customer(db, user, customer):
         raise HTTPException(status_code=404, detail="Customer not found")
     return customer
 
@@ -112,7 +122,7 @@ def _get_request(db: Session, request_id: UUID, user: User, *, lock: bool = Fals
         q = q.with_for_update()
     req = q.first()
     # 404 (not 403) for requests on patients the caller cannot see, so IDs cannot be probed.
-    if req is None or not can_access_customer(user, req.customer):
+    if req is None or not can_access_customer(db, user, req.customer):
         raise HTTPException(status_code=404, detail="Photo request not found")
     return req
 
@@ -126,7 +136,29 @@ def _photo_count(db: Session, request_id: UUID) -> int:
     )
 
 
+def _latest_email(db: Session, request_id: UUID) -> PhotoRequestEmail | None:
+    return (
+        db.query(PhotoRequestEmail)
+        .filter(PhotoRequestEmail.request_id == request_id)
+        .order_by(PhotoRequestEmail.created_at.desc())
+        .first()
+    )
+
+
+def _email_out(row: PhotoRequestEmail) -> PhotoEmailOut:
+    msg = row.outbound_message
+    return PhotoEmailOut(
+        id=row.id,
+        to_email=row.to_email,
+        status=msg.status if msg is not None else None,
+        last_error=msg.last_error if msg is not None else None,
+        sent_by_email=row.sent_by.email if row.sent_by is not None else None,
+        created_at=row.created_at,
+    )
+
+
 def _request_out(db: Session, req: PhotoRequest) -> PhotoRequestOut:
+    email = _latest_email(db, req.id)
     return PhotoRequestOut(
         id=req.id,
         customer_id=req.customer_id,
@@ -144,6 +176,9 @@ def _request_out(db: Session, req: PhotoRequest) -> PhotoRequestOut:
         closed_at=req.closed_at,
         created_by_email=req.created_by.email if req.created_by is not None else None,
         photo_count=_photo_count(db, req.id),
+        email_status=email.outbound_message.status if email is not None and email.outbound_message is not None else None,
+        emailed_at=email.created_at if email is not None else None,
+        emailed_by_email=email.sent_by.email if email is not None and email.sent_by is not None else None,
         created_at=req.created_at,
         updated_at=req.updated_at,
     )
@@ -278,6 +313,18 @@ def _detail(db: Session, req: PhotoRequest, user: User) -> PhotoRequestDetailOut
         .filter(PhotoRequestStatusEvent.request_id == req.id)
         .order_by(PhotoRequestStatusEvent.created_at.asc())
     )
+    emails = (
+        db.query(PhotoRequestEmail).filter(PhotoRequestEmail.request_id == req.id).order_by(PhotoRequestEmail.created_at.desc()).all()
+    )
+    assignment = active_doctor_assignment(db, req.customer_id)
+    assigned_doctor = None
+    if assignment is not None:
+        profile = db.get(DoctorProfile, assignment.doctor_user_id)
+        assigned_doctor = AssignedDoctorOut(
+            id=assignment.doctor_user_id,
+            email=assignment.doctor.email,
+            display_name=profile.display_name if profile is not None else None,
+        )
     return PhotoRequestDetailOut(
         request=_request_out(db, req),
         customer_name=req.customer.name,
@@ -287,6 +334,8 @@ def _detail(db: Session, req: PhotoRequest, user: User) -> PhotoRequestDetailOut
         assessments=assessments,
         links=[_link_out(link) for link in links],
         history=[StatusEventOut.model_validate(e) for e in history],
+        emails=[_email_out(e) for e in emails],
+        assigned_doctor=assigned_doctor,
     )
 
 
@@ -299,7 +348,7 @@ def _touch(req: PhotoRequest) -> None:
 
 @router.get("/customers/{customer_id}/photo-requests", response_model=list[PhotoRequestOut])
 def list_customer_photo_requests(
-    customer_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    customer_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_authenticated_user)
 ) -> list[PhotoRequestOut]:
     require_permission(user, "photo_request.view_summary")
     _get_customer(db, customer_id, user)
@@ -314,7 +363,7 @@ def list_customer_photo_requests(
 
 @router.get("/customers/{customer_id}/photo-requests/link-options", response_model=PhotoLinkOptionsOut)
 def photo_request_link_options(
-    customer_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    customer_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_authenticated_user)
 ) -> PhotoLinkOptionsOut:
     """This patient's appointments and treatment enquiries, for linking a new request."""
     require_permission(user, "photo_request.create")
@@ -335,10 +384,15 @@ def create_photo_request(
     customer_id: UUID,
     payload: PhotoRequestCreate,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_authenticated_user),
 ) -> IssuedLinkOut:
     require_permission(user, "photo_request.create")
     customer = _get_customer(db, customer_id, user)
+    if payload.send_email:
+        # Fail before anything is created when the patient cannot be emailed.
+        emailing.valid_patient_email(customer)
+        if customer.can_contact is False:
+            raise HTTPException(status_code=422, detail="This patient has opted out of contact, so the link cannot be emailed.")
     if payload.appointment_id is not None:
         appt = db.get(Appointment, payload.appointment_id)
         if appt is None or appt.customer_id != customer.id:
@@ -373,10 +427,106 @@ def create_photo_request(
             "deal_id": str(payload.deal_id) if payload.deal_id else None,
         },
     )
+    if payload.send_email:
+        try:
+            row, _dup, pipeline = _send_link_email(db, req, user, deal_id=payload.deal_id, resend=True)
+        except HTTPException:
+            # Nothing is kept: no request, no link, no pipeline change.
+            db.rollback()
+            raise
+        db.commit()
+        db.refresh(req)
+        link = db.get(PhotoAccessLink, row.link_id)
+        return IssuedLinkOut(request=_request_out(db, req), link=_link_out(link), email=_email_out(row), pipeline=pipeline)
     link, token = _issue_link(db, req, user)
     db.commit()
     db.refresh(req)
     return IssuedLinkOut(request=_request_out(db, req), link=_link_out(link), portal_url=_portal_url(token))
+
+
+def _send_link_email(
+    db: Session, req: PhotoRequest, user: User, *, deal_id: UUID | None = None, resend: bool = False
+) -> tuple[PhotoRequestEmail, bool, dict | None]:
+    """Email the patient a fresh link via the outbox; see app.services.photo_request_email."""
+    to_email = emailing.check_can_email(req)
+    if not resend:
+        existing = emailing.existing_live_email(db, req)
+        if existing is not None:
+            return existing, True, None
+    deal = emailing.resolve_deal(db, req, deal_id)
+    template = emailing.email_template(db)
+
+    savepoint = db.begin_nested()
+    try:
+        if deal is not None and req.deal_id != deal.id:
+            req.deal_id = deal.id
+        link, token = _issue_link(db, req, user)
+        name = (req.customer.name or "").strip()
+        msg = emailing.queue_outbound_email(
+            db,
+            customer=req.customer,
+            sender=user,
+            template=template,
+            variables={
+                "first_name": name.split(" ")[0] if name else "there",
+                "portal_link": _portal_url(token),
+                "link_expires": link.expires_at.strftime("%d %B %Y, %H:%M UTC"),
+                # The worker keeps these out of the contact thread and wipes them once sent.
+                "_redact": ["portal_link"],
+            },
+        )
+        row = PhotoRequestEmail(request_id=req.id, link_id=link.id, outbound_message_id=msg.id, to_email=to_email, sent_by_user_id=user.id)
+        db.add(row)
+        db.flush()
+        pipeline = emailing.advance_pipeline(db, req.customer, user, req.id)
+        _touch(req)
+        record_audit(
+            db,
+            actor=user,
+            action="photo_request.email_queued",
+            entity_type=ENTITY,
+            entity_id=req.id,
+            metadata={
+                "link_id": str(link.id),
+                "outbound_message_id": str(msg.id),
+                "deal_id": str(req.deal_id) if req.deal_id else None,
+                "pipeline": pipeline,
+            },
+        )
+        savepoint.commit()
+    except HTTPException:
+        savepoint.rollback()
+        raise
+    except Exception:
+        savepoint.rollback()
+        logger.exception("Could not queue photo request email")
+        raise HTTPException(status_code=503, detail="The email could not be queued, so the request was not sent. Please try again.")
+    return row, False, pipeline
+
+
+@router.post("/photo-requests/{request_id}/send-email", response_model=IssuedLinkOut)
+def send_photo_request_email(
+    request_id: UUID,
+    payload: SendEmailIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_authenticated_user),
+) -> IssuedLinkOut:
+    """Email the patient their upload link. Safe to retry: a link whose email is already
+    queued or sent is returned as-is (duplicate=true) unless resend is requested."""
+    require_permission(user, "photo_request.create")
+    req = _get_request(db, request_id, user, lock=True)
+    try:
+        row, duplicate, pipeline = _send_link_email(db, req, user, deal_id=payload.deal_id, resend=payload.resend)
+    except HTTPException as exc:
+        db.rollback()
+        reason = exc.detail if isinstance(exc.detail, str) else (exc.detail or {}).get("code", "error")
+        record_audit(db, actor=user, action="photo_request.email_not_sent", entity_type=ENTITY, entity_id=request_id, metadata={"reason": reason, "status_code": exc.status_code})
+        db.commit()
+        raise
+    db.commit()
+    db.refresh(req)
+    link = db.get(PhotoAccessLink, row.link_id)
+    return IssuedLinkOut(request=_request_out(db, req), link=_link_out(link), email=_email_out(row), duplicate=duplicate, pipeline=pipeline)
 
 
 @router.get("/photo-requests", response_model=list[PhotoRequestQueueItem])
@@ -384,21 +534,22 @@ def photo_request_queue(
     status: str | None = Query(default=None, max_length=30),
     limit: int = Query(default=100, ge=1, le=500),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_authenticated_user),
 ) -> list[PhotoRequestQueueItem]:
     """Review queue across the patients the caller can access."""
     require_permission(user, "photo_request.view_summary")
     q = db.query(PhotoRequest).join(Customer, Customer.id == PhotoRequest.customer_id)
     if status:
         q = q.filter(PhotoRequest.status.in_([s.strip() for s in status.split(",") if s.strip()]))
-    if not sees_all_customers(user):
-        q = q.filter(Customer.owner_user_id == user.id)
+    scope = customer_scope(db, user)
+    if scope is not None:
+        q = q.filter(scope)
     rows = q.order_by(PhotoRequest.updated_at.desc()).limit(limit).all()
     return [PhotoRequestQueueItem(**_request_out(db, r).model_dump(), customer_name=r.customer.name) for r in rows]
 
 
 @router.get("/photo-requests/{request_id}", response_model=PhotoRequestDetailOut)
-def get_photo_request(request_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> PhotoRequestDetailOut:
+def get_photo_request(request_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_authenticated_user)) -> PhotoRequestDetailOut:
     require_permission(user, "photo_request.view_summary")
     return _detail(db, _get_request(db, request_id, user), user)
 
@@ -408,7 +559,7 @@ def change_status(
     request_id: UUID,
     payload: StatusChangeIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_authenticated_user),
 ) -> PhotoRequestDetailOut:
     sources, permission = STAFF_TRANSITIONS[payload.status]
     require_permission(user, permission)
@@ -455,7 +606,7 @@ def change_status(
 
 
 @router.post("/photo-requests/{request_id}/links", response_model=IssuedLinkOut, status_code=201)
-def issue_link(request_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> IssuedLinkOut:
+def issue_link(request_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_authenticated_user)) -> IssuedLinkOut:
     require_permission(user, "photo_request.manage_links")
     req = _get_request(db, request_id, user, lock=True)
     link, token = _issue_link(db, req, user)
@@ -471,7 +622,7 @@ def revoke_link(
     link_id: UUID,
     payload: LinkRevokeIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_authenticated_user),
 ) -> PhotoAccessLinkOut:
     require_permission(user, "photo_request.manage_links")
     req = _get_request(db, request_id, user)
@@ -504,7 +655,7 @@ def get_photo_content(
     photo_id: UUID,
     download: bool = False,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_authenticated_user),
 ) -> StreamingResponse:
     """Authenticated, audited stream of one photo. There is no public URL for photos."""
     require_permission(user, "photo.view")
@@ -540,7 +691,7 @@ def hide_photo(
     photo_id: UUID,
     payload: PhotoHideIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_authenticated_user),
 ) -> PatientPhotoOut:
     """Soft delete: the photo is flagged, never erased, so the record stays complete."""
     require_permission(user, "photo.hide")
@@ -638,7 +789,7 @@ def _update_entry(db: Session, req: PhotoRequest, user: User, row, entry_type: s
 
 
 @router.post("/photo-requests/{request_id}/notes", response_model=PhotoRequestDetailOut, status_code=201)
-def add_note(request_id: UUID, payload: EntryIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> PhotoRequestDetailOut:
+def add_note(request_id: UUID, payload: EntryIn, db: Session = Depends(get_db), user: User = Depends(get_authenticated_user)) -> PhotoRequestDetailOut:
     require_permission(user, "note.write")
     req = _get_request(db, request_id, user)
     _create_entry(db, req, user, PhotoRequestNote, "note", payload.body)
@@ -648,7 +799,7 @@ def add_note(request_id: UUID, payload: EntryIn, db: Session = Depends(get_db), 
 
 @router.patch("/photo-requests/{request_id}/notes/{note_id}", response_model=PhotoRequestDetailOut)
 def edit_note(
-    request_id: UUID, note_id: UUID, payload: EntryIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    request_id: UUID, note_id: UUID, payload: EntryIn, db: Session = Depends(get_db), user: User = Depends(get_authenticated_user)
 ) -> PhotoRequestDetailOut:
     require_permission(user, "note.write")
     req = _get_request(db, request_id, user)
@@ -659,7 +810,7 @@ def edit_note(
 
 @router.post("/photo-requests/{request_id}/assessments", response_model=PhotoRequestDetailOut, status_code=201)
 def add_assessment(
-    request_id: UUID, payload: EntryIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    request_id: UUID, payload: EntryIn, db: Session = Depends(get_db), user: User = Depends(get_authenticated_user)
 ) -> PhotoRequestDetailOut:
     require_permission(user, "assessment.write")
     req = _get_request(db, request_id, user)
@@ -676,7 +827,7 @@ def edit_assessment(
     assessment_id: UUID,
     payload: EntryIn,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_authenticated_user),
 ) -> PhotoRequestDetailOut:
     require_permission(user, "assessment.write")
     req = _get_request(db, request_id, user)

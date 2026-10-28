@@ -52,3 +52,11 @@ class OutboundMessageOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @model_validator(mode="after")
+    def mask_secret_variables(self):
+        # Variables listed in "_redact" (e.g. a patient's private upload link) are never shown.
+        if isinstance(self.variables, dict) and self.variables.get("_redact"):
+            hidden = set(self.variables.get("_redact") or [])
+            self.variables = {k: ("[hidden]" if k in hidden else v) for k, v in self.variables.items()}
+        return self

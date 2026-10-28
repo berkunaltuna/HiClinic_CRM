@@ -169,3 +169,39 @@ def client_key(request: Request) -> str:
         if fwd:
             return fwd.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
+
+# --- Short-lived document links for patients ------------------------------------------
+
+DOCUMENT_AUDIENCE = "hiclinic-patient-document"
+
+
+def create_document_token(link: PhotoAccessLink, document_id: UUID, customer_id: UUID) -> tuple[str, datetime]:
+    """A link to exactly one document, valid for PORTAL_DOCUMENT_LINK_SECONDS and only while
+    the portal link it came from is still usable."""
+    now = now_utc()
+    exp = now + timedelta(seconds=settings.portal_document_link_seconds)
+    payload = {
+        "typ": "patient_document",
+        "aud": DOCUMENT_AUDIENCE,
+        "sub": str(document_id),
+        "cid": str(customer_id),
+        "lid": str(link.id),
+        "iat": int(now.timestamp()),
+        "exp": int(exp.timestamp()),
+        "jti": secrets.token_hex(8),
+    }
+    return jwt.encode(payload, _portal_key(), algorithm="HS256"), exp
+
+
+def decode_document_token(token: str) -> dict:
+    payload = jwt.decode(
+        token,
+        _portal_key(),
+        algorithms=["HS256"],
+        audience=DOCUMENT_AUDIENCE,
+        options={"require": ["exp", "aud", "sub", "cid", "lid", "typ"]},
+    )
+    if payload.get("typ") != "patient_document":
+        raise ValueError("wrong token type")
+    return payload

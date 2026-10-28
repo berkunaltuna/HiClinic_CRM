@@ -12,6 +12,7 @@ import { WhatsAppQuickAction } from "@/components/WhatsAppQuickAction";
 import { MergeCustomerDialog } from "@/components/MergeCustomerDialog";
 import { ContactPermissionsCard } from "@/components/ContactPermissionsCard";
 import { PhotoRequestsCard } from "@/components/PhotoRequestsCard";
+import { CareTeamCard } from "@/components/CareTeamCard";
 
 export default function ContactDetailPage() {
   const toast = useToast();
@@ -297,6 +298,8 @@ export default function ContactDetailPage() {
             <ContactPermissionsCard customer={c} onSaved={setC} />
 
             <PhotoRequestsCard customerId={c.id} />
+
+            <CareTeamCard customerId={c.id} />
 
             <div className="card">
               <div className="cardHeader" style={{ fontWeight: 900 }}>Lead form details</div>

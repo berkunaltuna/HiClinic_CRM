@@ -51,6 +51,7 @@ export default function PatientPhotoPortalPage() {
   const fileInput = useRef<HTMLInputElement>(null);
   const uploading = useRef(false);
   const started = useRef(false);
+  const exchanged = useRef(new Set<string>());
 
   const handleAuthError = useCallback((err: unknown) => {
     const status = err instanceof ApiError ? err.status : 0;
@@ -80,33 +81,54 @@ export default function PatientPhotoPortalPage() {
   );
 
   // Open the session: the link token arrives in the URL fragment (never sent to servers)
-  // and is exchanged once, then removed from the address bar and history.
+  // and is exchanged once, then removed from the address bar and history. A link opened
+  // while this page is already showing only changes the fragment, so listen for that too.
   useEffect(() => {
-    if (started.current) return; // each exchange spends one of the link's limited uses
-    started.current = true;
-    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
-    const linkToken = hash.get("token");
-    if (linkToken) window.history.replaceState(null, "", window.location.pathname);
-    (async () => {
+    const exchange = async (linkToken: string) => {
+      setPhase({ kind: "loading" });
+      try {
+        const out = await portalFetch<{ session_token: string }>("/session", null, { method: "POST", body: JSON.stringify({ token: linkToken }) });
+        writeSession(out.session_token);
+        setSession(out.session_token);
+        await load(out.session_token);
+      } catch (err) {
+        if (!handleAuthError(err)) setPhase({ kind: "error", message: (err as Error).message || "Something went wrong." });
+      }
+    };
+
+    // Returns the fragment's token (if any) after stripping it from the URL.
+    const takeToken = (): string | null => {
+      const linkToken = new URLSearchParams(window.location.hash.replace(/^#/, "")).get("token");
+      if (window.location.hash) window.history.replaceState(null, "", window.location.pathname);
+      // Each exchange spends one of the link's limited uses: never exchange the same token twice
+      // (React strict mode runs this effect twice in development).
+      if (!linkToken || exchanged.current.has(linkToken)) return null;
+      exchanged.current.add(linkToken);
+      return linkToken;
+    };
+
+    const onHashChange = () => {
+      const linkToken = takeToken();
+      if (linkToken) void exchange(linkToken);
+    };
+    window.addEventListener("hashchange", onHashChange);
+
+    if (!started.current) {
+      started.current = true;
+      const linkToken = takeToken();
       if (linkToken) {
-        try {
-          const out = await portalFetch<{ session_token: string }>("/session", null, { method: "POST", body: JSON.stringify({ token: linkToken }) });
-          writeSession(out.session_token);
-          setSession(out.session_token);
-          await load(out.session_token);
-        } catch (err) {
-          if (!handleAuthError(err)) setPhase({ kind: "error", message: (err as Error).message || "Something went wrong." });
-        }
-        return;
-      }
-      const existing = readSession();
-      if (existing) {
-        setSession(existing);
-        await load(existing);
+        void exchange(linkToken);
       } else {
-        setPhase({ kind: "no_link" });
+        const existing = readSession();
+        if (existing) {
+          setSession(existing);
+          void load(existing);
+        } else {
+          setPhase({ kind: "no_link" });
+        }
       }
-    })();
+    }
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, [load, handleAuthError]);
 
   useEffect(() => () => pending.forEach((p) => p.preview && URL.revokeObjectURL(p.preview)), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -198,6 +220,25 @@ export default function PatientPhotoPortalPage() {
       setMessage({ text: "Photo removed.", kind: "info" });
     } catch (err) {
       if (!handleAuthError(err)) setMessage({ text: (err as Error).message, kind: "error" });
+    }
+  }
+
+  // The proforma opens through a short-lived, single-document link (never a public file URL).
+  async function openProforma() {
+    if (!session) return;
+    // Open the tab now (inside the click) so pop-up blockers allow it; point it at the file once ready.
+    const win = window.open("about:blank", "_blank");
+    try {
+      const out = await portalFetch<{ url: string }>("/proforma/link", session, { method: "POST" });
+      if (win) {
+        win.opener = null;
+        win.location.href = `${API_URL}${out.url}`;
+      } else {
+        window.location.href = `${API_URL}${out.url}`;
+      }
+    } catch (err) {
+      win?.close();
+      if (!handleAuthError(err)) setMessage({ text: (err as Error).message || "The proforma could not be opened.", kind: "error" });
     }
   }
 
@@ -387,6 +428,42 @@ export default function PatientPhotoPortalPage() {
               </div>
             </section>
           )}
+
+          <section className="card" aria-labelledby="doctor-h">
+            <div className="cardBody" style={{ display: "grid", gap: 6 }}>
+              <h2 id="doctor-h" style={{ fontSize: 16, margin: 0 }}>Your doctor</h2>
+              {req.doctor ? (
+                <>
+                  <div style={{ fontWeight: 700 }}>{req.doctor.display_name}</div>
+                  {(req.doctor.title || req.doctor.specialty) && (
+                    <div className="muted" style={{ fontSize: 13 }}>{[req.doctor.title, req.doctor.specialty].filter(Boolean).join(" · ")}</div>
+                  )}
+                  {req.doctor.bio && <div style={{ whiteSpace: "pre-wrap", fontSize: 14 }}>{req.doctor.bio}</div>}
+                </>
+              ) : (
+                <div className="muted">Your doctor&apos;s details will appear here once the clinic has added them.</div>
+              )}
+            </div>
+          </section>
+
+          <section className="card" aria-labelledby="proforma-h">
+            <div className="cardBody" style={{ display: "grid", gap: 6 }}>
+              <h2 id="proforma-h" style={{ fontSize: 16, margin: 0 }}>Your proforma invoice</h2>
+              {req.proforma.available ? (
+                <>
+                  <div className="muted" style={{ fontSize: 13 }}>
+                    {req.proforma.filename || "Proforma invoice"}
+                    {req.proforma.uploaded_at ? ` · added ${new Date(req.proforma.uploaded_at).toLocaleDateString()}` : ""}
+                  </div>
+                  <button className="btn" onClick={openProforma} disabled={busy} style={{ justifySelf: "start" }}>Open proforma (PDF)</button>
+                  <div className="muted" style={{ fontSize: 12 }}>Opens a private copy for a couple of minutes. Please don&apos;t share the address.</div>
+                </>
+              ) : (
+                <div className="muted">There is no proforma invoice yet. The clinic will add it here when it&apos;s ready.</div>
+              )}
+              {message?.kind === "error" && !req.can_upload && <div role="alert" style={{ color: "var(--danger)" }}>{message.text}</div>}
+            </div>
+          </section>
         </>
       )}
     </div>
