@@ -826,3 +826,44 @@ def test_details_locked_once_photos_are_uploaded(client, db, team):
     rid2 = new_request(client, coord, team["pa"])["request"]["id"]
     assert client.post(f"/photo-requests/{rid2}/status", json={"status": "withdrawn"}, headers=coord).status_code == 200
     assert client.patch(f"/photo-requests/{rid2}", json={"title": "x"}, headers=coord).status_code == 409
+
+
+# --- sharing the link without email (copy / WhatsApp) -------------------------------------------
+
+
+def test_link_without_email_copy_and_whatsapp(client, db, team):
+    coord, doc = team["coord"], team["doc_a"]
+    r = client.post("/customers", json={"name": "Mehmet NoEmail", "email": None, "phone": "+90 532 000 0000", "company": None, "next_follow_up_at": None}, headers=coord)
+    cid = r.json()["id"]
+    assign(client, team["admin"], cid, doc)
+
+    # CRM staff get what they need to send by WhatsApp; doctors never get contact details.
+    opts = client.get(f"/customers/{cid}/photo-requests/link-options", headers=coord).json()
+    assert opts["has_email"] is False and opts["whatsapp_phone"] == "+90 532 000 0000" and opts["patient_first_name"] == "Mehmet"
+    opts = client.get(f"/customers/{cid}/photo-requests/link-options", headers=doc).json()
+    assert opts["whatsapp_phone"] is None
+
+    # No email: emailing is refused clearly; creating without email returns the link to share.
+    assert client.post(f"/customers/{cid}/photo-requests", json={"title": "x", "send_email": True}, headers=coord).status_code == 422
+    out = client.post(f"/customers/{cid}/photo-requests", json={"title": "Front photos"}, headers=coord).json()
+    assert out["portal_url"] and "#token=pr_" in out["portal_url"] and out["email"] is None
+    rid, lid = out["request"]["id"], out["link"]["id"]
+    assert client.post("/portal/photo-request/session", json={"token": out["portal_url"].split("#token=")[1]}).status_code == 200
+
+    # Copy / WhatsApp hand-offs are audited (channel only, never the link).
+    for channel in ("whatsapp", "copy"):
+        assert client.post(f"/photo-requests/{rid}/links/{lid}/shared", json={"channel": channel}, headers=coord).status_code == 204
+    db.expire_all()
+    shared = [a for a in db.query(AuditLog).filter(AuditLog.entity_id == uuid.UUID(rid), AuditLog.action == "photo_request.link_shared")]
+    assert sorted(a.meta["channel"] for a in shared) == ["copy", "whatsapp"]
+    assert all("pr_" not in str(a.meta) for a in shared)
+    assert client.post(f"/photo-requests/{rid}/links/{lid}/shared", json={"channel": "sms"}, headers=coord).status_code == 422
+    assert client.post(f"/photo-requests/{rid}/links/{lid}/shared", json={"channel": "copy"}, headers=team["assistant"]).status_code == 403
+    assert client.post(f"/photo-requests/{rid}/links/{uuid.uuid4()}/shared", json={"channel": "copy"}, headers=coord).status_code == 404
+    client.post(f"/photo-requests/{rid}/links/{lid}/revoke", json={}, headers=coord)
+    assert client.post(f"/photo-requests/{rid}/links/{lid}/shared", json={"channel": "copy"}, headers=coord).status_code == 409
+
+    # Opted-out patients get no WhatsApp number either.
+    db.query(Customer).filter(Customer.id == uuid.UUID(cid)).update({Customer.can_contact: False})
+    db.commit()
+    assert client.get(f"/customers/{cid}/photo-requests/link-options", headers=coord).json()["whatsapp_phone"] is None

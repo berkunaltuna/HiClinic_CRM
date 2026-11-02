@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useToast } from "@/components/Toast";
-import { type DealSelection, type IssuedLinkOut, type PhotoLinkOptionsOut, dealSelectionFrom, errorDetail } from "@/lib/photoRequests";
+import {
+  type DealSelection,
+  type IssuedLinkOut,
+  type LinkDelivery,
+  type PhotoLinkOptionsOut,
+  dealSelectionFrom,
+  errorDetail,
+} from "@/lib/photoRequests";
 
 /** Create a photo request (CRM contact page and doctor interface). Emails the link by default. */
 export function NewPhotoRequestForm({
@@ -14,7 +21,7 @@ export function NewPhotoRequestForm({
 }: {
   customerId: string;
   onCancel: () => void;
-  onCreated: (o: IssuedLinkOut) => void;
+  onCreated: (o: IssuedLinkOut, contact: { method: LinkDelivery; firstName: string; whatsappPhone: string | null }) => void;
   showAppointment?: boolean;
 }) {
   const toast = useToast();
@@ -22,15 +29,23 @@ export function NewPhotoRequestForm({
   const [instructions, setInstructions] = useState("");
   const [appointmentId, setAppointmentId] = useState("");
   const [dealId, setDealId] = useState("");
-  const [sendEmail, setSendEmail] = useState(true);
-  const [options, setOptions] = useState<PhotoLinkOptionsOut>({ appointments: [], deals: [] });
+  const [options, setOptions] = useState<PhotoLinkOptionsOut | null>(null);
+  // Chosen by staff; until then: email if there is an address, else WhatsApp, else copy.
+  const [picked, setPicked] = useState<LinkDelivery | null>(null);
   const [selection, setSelection] = useState<DealSelection | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    apiFetch<PhotoLinkOptionsOut>(`/customers/${customerId}/photo-requests/link-options`).then(setOptions).catch(() => undefined);
+    apiFetch<PhotoLinkOptionsOut>(`/customers/${customerId}/photo-requests/link-options`)
+      .then(setOptions)
+      .catch(() => setOptions({ appointments: [], deals: [], has_email: false, whatsapp_phone: null, patient_first_name: "" }));
   }, [customerId]);
+
+  const hasEmail = !!options?.has_email;
+  const whatsappPhone = options?.whatsapp_phone || null;
+  const method: LinkDelivery = picked ?? (hasEmail ? "email" : whatsappPhone ? "whatsapp" : "copy");
+  const sendEmail = method === "email";
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -38,8 +53,7 @@ export function NewPhotoRequestForm({
     setSaving(true);
     setError(null);
     try {
-      onCreated(
-        await apiFetch<IssuedLinkOut>(`/customers/${customerId}/photo-requests`, {
+      const out = await apiFetch<IssuedLinkOut>(`/customers/${customerId}/photo-requests`, {
           method: "POST",
           body: JSON.stringify({
             title: title.trim(),
@@ -48,8 +62,8 @@ export function NewPhotoRequestForm({
             deal_id: dealId || null,
             send_email: sendEmail,
           }),
-        }),
-      );
+        });
+      onCreated(out, { method, firstName: options?.patient_first_name || "", whatsappPhone });
     } catch (err: any) {
       const sel = dealSelectionFrom(err);
       if (sel) {
@@ -65,7 +79,7 @@ export function NewPhotoRequestForm({
     }
   }
 
-  const dealChoices = selection ? selection.deals : options.deals;
+  const dealChoices = selection ? selection.deals : options?.deals || [];
 
   return (
     <form onSubmit={submit} style={{ display: "grid", gap: 8, padding: 10, border: "1px solid var(--border)", borderRadius: 12 }}>
@@ -79,7 +93,7 @@ export function NewPhotoRequestForm({
             <label htmlFor="pr-appt" style={{ fontSize: 12, fontWeight: 700 }}>Appointment (optional)</label>
             <select id="pr-appt" value={appointmentId} onChange={(e) => setAppointmentId(e.target.value)}>
               <option value="">None</option>
-              {options.appointments.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+              {(options?.appointments || []).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
             </select>
           </div>
         )}
@@ -93,19 +107,28 @@ export function NewPhotoRequestForm({
           </select>
         </div>
       </div>
-      <label style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13 }}>
-        <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} />
-        <span>
-          Email the secure upload link to the patient now
-          <span className="muted" style={{ display: "block", fontSize: 12 }}>
-            Sent through the CRM outbox. The email contains only the link, never photos or clinical details. Untick to copy the link yourself.
-          </span>
-        </span>
-      </label>
+      <fieldset style={{ border: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
+        <legend style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>How should the patient get the link?</legend>
+        {(
+          [
+            { value: "email", label: "Email it now", hint: hasEmail ? "Sent through the CRM outbox. The email contains only the link." : "This patient has no email address.", disabled: !hasEmail },
+            { value: "whatsapp", label: "Send by WhatsApp", hint: whatsappPhone ? "After creating, open WhatsApp with a ready-made message containing the link." : "No phone number you can use for this patient.", disabled: !whatsappPhone },
+            { value: "copy", label: "Copy the link", hint: "Paste it into a message yourself.", disabled: false },
+          ] as { value: LinkDelivery; label: string; hint: string; disabled: boolean }[]
+        ).map((o) => (
+          <label key={o.value} style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13, opacity: o.disabled ? 0.55 : 1 }}>
+            <input type="radio" name={`delivery-${customerId}`} value={o.value} checked={method === o.value} disabled={o.disabled || !options} onChange={() => setPicked(o.value)} />
+            <span>
+              {o.label}
+              <span className="muted" style={{ display: "block", fontSize: 12 }}>{o.hint}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
       {error && <div role="alert" style={{ color: "var(--danger)", fontSize: 13 }}>{error}</div>}
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn btnPrimary" type="submit" disabled={saving || !title.trim() || (!!selection && !dealId)}>
-          {saving ? "Working…" : sendEmail ? "Create and email link" : "Create and get link"}
+        <button className="btn btnPrimary" type="submit" disabled={saving || !options || !title.trim() || (!!selection && !dealId)}>
+          {saving ? "Working…" : method === "email" ? "Create and email link" : method === "whatsapp" ? "Create link for WhatsApp" : "Create and get link"}
         </button>
         <button className="btn" type="button" onClick={onCancel} disabled={saving}>Cancel</button>
       </div>

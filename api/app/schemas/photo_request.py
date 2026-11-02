@@ -24,6 +24,15 @@ class LinkOption(BaseModel):
 class PhotoLinkOptionsOut(BaseModel):
     appointments: list[LinkOption]
     deals: list[LinkOption]
+    # How the link can reach the patient. The phone number is only given to CRM staff
+    # (doctors never see patient contact details).
+    has_email: bool = False
+    whatsapp_phone: str | None = None
+    patient_first_name: str = ""
+
+
+class LinkSharedIn(BaseModel):
+    channel: Literal["whatsapp", "copy"]
 
 
 class PhotoRequestOut(BaseModel):

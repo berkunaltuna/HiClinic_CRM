@@ -10,7 +10,7 @@ import logging
 from datetime import timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -47,6 +47,7 @@ from app.schemas.photo_request import (
     SendEmailIn,
     LinkOption,
     LinkRevokeIn,
+    LinkSharedIn,
     PatientPhotoOut,
     PhotoAccessLinkOut,
     PhotoHideIn,
@@ -60,6 +61,7 @@ from app.schemas.photo_request import (
 )
 from app.services.audit import record_audit
 from app.services.photo_permissions import (
+    CRM_STAFF,
     can_access_customer,
     has_permission,
     permissions_for,
@@ -401,6 +403,9 @@ def photo_request_link_options(
             for a in appts
         ],
         deals=[LinkOption(id=d.id, label=f"{d.treatment_interest or 'Enquiry'} ({d.status})") for d in deals],
+        has_email=bool((customer.email or "").strip()),
+        whatsapp_phone=((customer.phone or "").strip() or None) if role_of(user) in CRM_STAFF and customer.can_contact is not False else None,
+        patient_first_name=((customer.name or "").strip().split(" ") or [""])[0],
     )
 
 
@@ -744,6 +749,35 @@ def issue_link(request_id: UUID, db: Session = Depends(get_db), user: User = Dep
     db.commit()
     db.refresh(req)
     return IssuedLinkOut(request=_request_out(db, req), link=_link_out(link), portal_url=_portal_url(token))
+
+
+@router.post("/photo-requests/{request_id}/links/{link_id}/shared", status_code=204, response_class=Response)
+def link_shared(
+    request_id: UUID,
+    link_id: UUID,
+    payload: LinkSharedIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_authenticated_user),
+) -> Response:
+    """Record that staff copied the link or opened WhatsApp with it (sending happens in their
+    own WhatsApp, so this records the hand-off, not delivery)."""
+    require_permission(user, "photo_request.manage_links")
+    req = _get_request(db, request_id, user)
+    link = db.get(PhotoAccessLink, link_id)
+    if link is None or link.request_id != req.id:
+        raise HTTPException(status_code=404, detail="Link not found")
+    if not link_is_usable(link):
+        raise HTTPException(status_code=409, detail="This link is no longer active. Create a new one.")
+    record_audit(
+        db,
+        actor=user,
+        action="photo_request.link_shared",
+        entity_type=ENTITY,
+        entity_id=req.id,
+        metadata={"link_id": str(link.id), "channel": payload.channel},
+    )
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/photo-requests/{request_id}/links/{link_id}/revoke", response_model=PhotoAccessLinkOut)

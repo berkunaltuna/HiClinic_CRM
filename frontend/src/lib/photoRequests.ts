@@ -166,7 +166,27 @@ export type DetailChangeOut = {
 export type PhotoRequestEditOut = { detail: PhotoRequestDetailOut; changed_fields: string[]; email: PhotoEmailOut | null };
 
 export type LinkOption = { id: UUID; label: string };
-export type PhotoLinkOptionsOut = { appointments: LinkOption[]; deals: LinkOption[] };
+export type PhotoLinkOptionsOut = {
+  appointments: LinkOption[];
+  deals: LinkOption[];
+  has_email: boolean;
+  whatsapp_phone: string | null;
+  patient_first_name: string;
+};
+
+export type LinkDelivery = "email" | "whatsapp" | "copy";
+
+/** What staff send by hand (WhatsApp or pasted): the link only, no clinical details. */
+export function patientLinkMessage(firstName: string, url: string, expiresAt?: string | null): string {
+  const expires = expiresAt
+    ? ` It expires on ${new Date(expiresAt).toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" })}.`
+    : "";
+  return (
+    `Hi ${firstName || "there"}, the clinic has asked you to share some photos. ` +
+    `Please upload them using your personal, secure link:\n\n${url}\n\n` +
+    `The link is only for you.${expires} Please don't send photos here on WhatsApp. Only upload them through the link.`
+  );
+}
 
 export const PHOTO_STATUS_LABELS: Record<PhotoRequestStatus, string> = {
   requested: "Requested",

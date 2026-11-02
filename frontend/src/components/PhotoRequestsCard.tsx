@@ -14,7 +14,7 @@ export function PhotoRequestsCard({ customerId }: { customerId: string }) {
   const [items, setItems] = useState<PhotoRequestOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [issued, setIssued] = useState<string | null>(null);
+  const [issued, setIssued] = useState<{ out: IssuedLinkOut; firstName: string; whatsappPhone: string | null } | null>(null);
 
   async function load() {
     try {
@@ -38,15 +38,15 @@ export function PhotoRequestsCard({ customerId }: { customerId: string }) {
         )}
       </div>
       <div className="cardBody" style={{ display: "grid", gap: 10 }}>
-        {issued && <IssuedLink url={issued} />}
+        {issued && <IssuedLink issued={issued.out} firstName={issued.firstName} whatsappPhone={issued.whatsappPhone} />}
         {creating && (
           <NewPhotoRequestForm
             customerId={customerId}
             onCancel={() => setCreating(false)}
-            onCreated={(out: IssuedLinkOut) => {
+            onCreated={(out: IssuedLinkOut, contact) => {
               setCreating(false);
-              setIssued(out.portal_url);
-              toast.push(out.email ? `Photo request emailed to ${out.email.to_email}` : "Photo request created");
+              setIssued(out.portal_url ? { out, firstName: contact.firstName, whatsappPhone: contact.whatsappPhone } : null);
+              toast.push(out.email ? `Photo request emailed to ${out.email.to_email}` : contact.method === "whatsapp" ? "Photo request created. Open WhatsApp to send the link." : "Photo request created. Copy the link to send it.");
               void load();
             }}
           />

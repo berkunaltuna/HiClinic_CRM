@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { fmtDateTime } from "@/lib/dates";
 import { useToast } from "@/components/Toast";
+import { buildWhatsAppLink } from "@/lib/whatsapp";
 import {
   type EntryOut,
   type IssuedLinkOut,
@@ -12,6 +13,7 @@ import {
   type DetailChangeOut,
   type PhotoLinkOptionsOut,
   type PhotoRequestEditOut,
+  patientLinkMessage,
   EMAIL_STATUS_LABELS,
   dealSelectionFrom,
   errorDetail,
@@ -52,7 +54,8 @@ export function PhotoRequestView({ requestId }: { requestId: string }) {
   const [d, setD] = useState<PhotoRequestDetailOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [issuedUrl, setIssuedUrl] = useState<string | null>(null);
+  const [issued, setIssued] = useState<IssuedLinkOut | null>(null);
+  const contact = useLinkOptions(requestCustomerId(d));
   const [editing, setEditing] = useState(false);
 
   async function load() {
@@ -123,7 +126,7 @@ export function PhotoRequestView({ requestId }: { requestId: string }) {
   async function issueLink() {
     const out = await act(() => apiFetch<IssuedLinkOut>(`/photo-requests/${requestId}/links`, { method: "POST" }), "New patient link created");
     if (out) {
-      setIssuedUrl(out.portal_url);
+      setIssued(out);
       await load();
     }
   }
@@ -283,7 +286,7 @@ export function PhotoRequestView({ requestId }: { requestId: string }) {
                       ))}
                     </ul>
                   )}
-                  {issuedUrl && <IssuedLink url={issuedUrl} />}
+                  {issued && <IssuedLink issued={issued} firstName={contact.patient_first_name} whatsappPhone={contact.whatsapp_phone} />}
                   {d.links.map((l) => (
                     <div key={l.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", fontSize: 13 }}>
                       <span>
@@ -324,30 +327,63 @@ export function PhotoRequestView({ requestId }: { requestId: string }) {
   );
 }
 
-export function IssuedLink({ url }: { url: string }) {
+export function IssuedLink({
+  issued,
+  firstName = "",
+  whatsappPhone = null,
+}: {
+  issued: IssuedLinkOut;
+  firstName?: string;
+  whatsappPhone?: string | null;
+}) {
   const toast = useToast();
+  const url = issued.portal_url || "";
+  const message = patientLinkMessage(firstName, url, issued.link?.expires_at);
+  const waLink = whatsappPhone ? buildWhatsAppLink({ name: firstName, phone: whatsappPhone }, message) : null;
+
+  // Recorded in the audit log (we can't see whether the message was actually sent).
+  function recordShare(channel: "whatsapp" | "copy") {
+    if (!issued.link) return;
+    void apiFetch(`/photo-requests/${issued.request.id}/links/${issued.link.id}/shared`, { method: "POST", body: JSON.stringify({ channel }) }).catch(() => undefined);
+  }
+
+  async function copy(text: string, what: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.push(`${what} copied`);
+      recordShare("copy");
+    } catch {
+      toast.push("Copy failed — select the link and copy it manually", "error");
+    }
+  }
+
+  if (!url) return null;
   return (
-    <div style={{ display: "grid", gap: 6, padding: 10, border: "1px solid var(--border)", borderRadius: 12, background: "rgba(30,103,150,0.05)" }}>
-      <label htmlFor="issued-link" style={{ fontSize: 12, fontWeight: 800 }}>Patient link (shown once — copy it now)</label>
-      <div style={{ display: "flex", gap: 8 }}>
-        <input id="issued-link" className="formField" readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
-        <button
-          className="btn btnPrimary"
-          type="button"
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(url);
-              toast.push("Link copied");
-            } catch {
-              toast.push("Copy failed — select the link and copy it manually", "error");
-            }
-          }}
-        >
-          Copy
-        </button>
+    <div style={{ display: "grid", gap: 8, padding: 10, border: "1px solid var(--border)", borderRadius: 12, background: "rgba(30,103,150,0.05)" }}>
+      <label htmlFor={`issued-link-${issued.link?.id}`} style={{ fontSize: 12, fontWeight: 800 }}>Patient link (shown once — send or copy it now)</label>
+      <input id={`issued-link-${issued.link?.id}`} className="formField" readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {waLink ? (
+          <a
+            className="btn btnPrimary"
+            href={waLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => recordShare("whatsapp")}
+            style={{ background: "#25D366", borderColor: "#25D366" }}
+          >
+            Open WhatsApp with message
+          </a>
+        ) : null}
+        <button className="btn" type="button" onClick={() => copy(url, "Link")}>Copy link</button>
+        <button className="btn" type="button" onClick={() => copy(message, "Message")}>Copy message</button>
       </div>
+      <details>
+        <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>Message text</summary>
+        <div style={{ whiteSpace: "pre-wrap", fontSize: 13, marginTop: 4 }}>{message}</div>
+      </details>
       <div className="muted" style={{ fontSize: 12 }}>
-        Send only this link to the patient. Never ask for or send photos by WhatsApp or email.
+        Send only this link. Never ask the patient to send photos on WhatsApp or by email; anyone who has the link can open it until it expires.
       </div>
     </div>
   );
@@ -561,9 +597,16 @@ const FIELD_LABELS: Record<string, string> = {
   deal_id: "Treatment enquiry",
 };
 
+const NO_OPTIONS: PhotoLinkOptionsOut = { appointments: [], deals: [], has_email: false, whatsapp_phone: null, patient_first_name: "" };
+
+function requestCustomerId(d: PhotoRequestDetailOut | null): string {
+  return d?.request.customer_id || "";
+}
+
 function useLinkOptions(customerId: string): PhotoLinkOptionsOut {
-  const [options, setOptions] = useState<PhotoLinkOptionsOut>({ appointments: [], deals: [] });
+  const [options, setOptions] = useState<PhotoLinkOptionsOut>(NO_OPTIONS);
   useEffect(() => {
+    if (!customerId) return;
     apiFetch<PhotoLinkOptionsOut>(`/customers/${customerId}/photo-requests/link-options`).then(setOptions).catch(() => undefined);
   }, [customerId]);
   return options;

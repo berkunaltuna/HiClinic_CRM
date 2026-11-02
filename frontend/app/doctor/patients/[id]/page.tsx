@@ -8,7 +8,7 @@ import { fmtDateTime } from "@/lib/dates";
 import { useToast } from "@/components/Toast";
 import { IssuedLink, onPhotoRequestChanged, openPhotoRequestWindow } from "@/components/PhotoRequestView";
 import { NewPhotoRequestForm } from "@/components/NewPhotoRequestForm";
-import { type CarePatientDetailOut, EMAIL_STATUS_LABELS, photoStatusLabel } from "@/lib/photoRequests";
+import { type CarePatientDetailOut, type IssuedLinkOut, EMAIL_STATUS_LABELS, photoStatusLabel } from "@/lib/photoRequests";
 
 export default function DoctorPatientPage() {
   const toast = useToast();
@@ -16,7 +16,7 @@ export default function DoctorPatientPage() {
   const [p, setP] = useState<CarePatientDetailOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [issued, setIssued] = useState<string | null>(null);
+  const [issued, setIssued] = useState<{ out: IssuedLinkOut; firstName: string; whatsappPhone: string | null } | null>(null);
 
   async function load() {
     try {
@@ -53,15 +53,15 @@ export default function DoctorPatientPage() {
           {!creating && <button className="btn btnPrimary" onClick={() => { setCreating(true); setIssued(null); }}>Request photos</button>}
         </div>
         <div className="cardBody" style={{ display: "grid", gap: 10 }}>
-          {issued && <IssuedLink url={issued} />}
+          {issued && <IssuedLink issued={issued.out} firstName={issued.firstName} whatsappPhone={issued.whatsappPhone} />}
           {creating && (
             <NewPhotoRequestForm
               customerId={id}
               showAppointment={false}
               onCancel={() => setCreating(false)}
-              onCreated={(out) => {
+              onCreated={(out, contact) => {
                 setCreating(false);
-                setIssued(out.portal_url);
+                setIssued(out.portal_url ? { out, firstName: contact.firstName, whatsappPhone: contact.whatsappPhone } : null);
                 toast.push(out.email ? `Photo request emailed to the patient` : "Photo request created");
                 void load();
               }}
